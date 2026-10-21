@@ -1,0 +1,11 @@
+node_modules
+.env
+.env.*
+.auth
+data
+test-results
+.agents
+.claude
+.dsh
+**/dist
+.git

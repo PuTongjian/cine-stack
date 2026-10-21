@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "sqlite"
+}
+model Movie {
+  id Int @id
+  title String
+  year String
+  poster String?
+  metadata String
+  watchedAt DateTime?
+  rating Float?
+  updatedAt DateTime @updatedAt
+}
+model Task {
+  id String @id @default(uuid())
+  kind String
+  movieId Int
+  status String @default("queued")
+  stage String @default("queued")
+  payload String
+  result String @default("{}")
+  error String?
+  remoteTaskId String?
+  targetFolderId String?
+  idempotencyKey String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model Resource {
+  id String @id @default(uuid())
+  movieId Int
+  searchId String
+  title String
+  postUrl String
+  shareId String
+  passcode String @default("")
+  createdAt DateTime @default(now())
+  @@unique([searchId, shareId])
+}
