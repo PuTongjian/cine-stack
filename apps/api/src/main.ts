@@ -1,8 +1,8 @@
 import 'reflect-metadata';
 import './config.js';
-import { Module, Controller, Get, Post, Put, Patch, Param, Query, Body, Res, BadRequestException, ParseIntPipe } from '@nestjs/common';
+import { Module, Controller, Get, Post, Put, Patch, Param, Query, Body, Req, Res, BadRequestException, ParseIntPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { mkdir } from 'node:fs/promises';
 import { database } from './database.js';
 import { dataDir } from './config.js';
@@ -10,9 +10,12 @@ import { TmdbService } from './tmdb.js';
 import { buildNfo, movieBasename } from './metadata.js';
 import { TaskService } from './tasks.js';
 import { createAuth } from './auth.js';
+import { StrmService } from './strm.js';
 
 const tmdb = new TmdbService();
 const tasks = new TaskService(tmdb);
+const strm = new StrmService(() => tasks.quark());
+tasks.strm = strm;
 @Controller('api')
 class ApiController {
   @Get('health') health() { return { status: 'ok' }; }
@@ -54,24 +57,30 @@ class ApiController {
   @Post('tasks/:id/retry') retry(@Param('id') id: string) { return tasks.retry(id); }
   @Get('integrations') integrations() { return { tmdb: !!(process.env.TMDB_API_KEY || process.env.TMDB_READ_ACCESS_TOKEN), suenen: !!(process.env.SUENEN_USERNAME && process.env.SUENEN_PASSWORD), quark: !!process.env.QUARK_COOKIE, folderId: process.env.QUARK_LIBRARY_FOLDER_ID || null, folderName: process.env.QUARK_LIBRARY_FOLDER_NAME || 'MovieLibrary', engine: 'CloudSaver MIT adapter', metadataUpload: true }; }
   @Post('integrations/quark/check') async checkQuark() { return { connected: true, count: (await tasks.quark().listFiles(process.env.QUARK_LIBRARY_FOLDER_ID)).length }; }
+  @Get('strm/settings') strmSettings() { return strm.getSettings(); }
+  @Put('strm/settings') saveStrmSettings(@Body() body: unknown) { return strm.saveSettings(body); }
+  @Get('strm/folders') strmFolders(@Query('folderId') folderId?: string) { return strm.folders(folderId); }
+  @Post('strm/sync') syncStrm() { return strm.sync(); }
+  @Get('strm/stream/:id') stream(@Param('id') id: string, @Req() req: Request, @Res() res: Response) { return strm.stream(id, req, res); }
 }
 @Module({ controllers: [ApiController] })
 class AppModule {}
 await mkdir(dataDir, { recursive: true });
 await database.$connect();
+await strm.initialize();
 await tasks.initialize();
 const app = await NestFactory.create(AppModule);
-// This first self-hosted version is loopback-only. Cross-origin writes are rejected.
+// Deployment origins must be explicitly configured; local development stays available.
 app.use((req: any, res: any, next: any) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     const origin = req.headers.origin;
-    if (origin && !/^http:\/\/(127\.0\.0\.1|localhost):(3001|5173|8080)$/.test(origin)) return res.status(403).json({ message: 'ORIGIN_DENIED' });
+    if (origin && origin !== process.env.APP_ORIGIN && !/^http:\/\/(127\.0\.0\.1|localhost):(3001|5173|8080)$/.test(origin)) return res.status(403).json({ message: 'ORIGIN_DENIED' });
     if (!req.is('application/json')) return res.status(415).json({ message: 'JSON_REQUIRED' });
   }
   next();
 });
 // Register parsers before authentication middleware, which reads the login body.
 app.use((await import('express')).json({ limit: '64kb' }));
-app.use(await createAuth());
+app.use(await createAuth((req) => strm.authorize(req)));
 app.enableShutdownHooks();
 await app.listen(Number(process.env.PORT || 3001), process.env.HOST || '127.0.0.1');

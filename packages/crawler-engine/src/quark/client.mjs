@@ -90,6 +90,14 @@ export class QuarkClient {
     await this.request('file/rename', { method: 'POST', body: { fid: fileId, file_name: name } });
   }
 
+  async downloadUrl(fileId) {
+    if (!/^[a-zA-Z0-9]+$/.test(fileId)) throw new Error('QUARK_INVALID_FILE_ID');
+    const result = await this.request('file/download', { method: 'POST', body: { fids: [fileId] } });
+    const url = result.data?.[0]?.download_url;
+    if (typeof url !== 'string') throw new Error('QUARK_DOWNLOAD_UNAVAILABLE');
+    return url;
+  }
+
   async uploadSmallFile(folderId, name, content, contentType = 'application/xml') {
     const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
     if (!bytes.length || bytes.length > 4 * 1024 * 1024) throw new Error('QUARK_METADATA_SIZE_LIMIT');

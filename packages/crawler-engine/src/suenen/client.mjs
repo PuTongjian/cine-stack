@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { load } from 'cheerio';
 import { CookieJar } from 'tough-cookie';
 import { loginSuenen } from './login.mjs';
+import { SUENEN_ORIGIN } from './origin.mjs';
 
 export function parseQuarkLinks(html, postUrl) {
   const $ = load(html);
@@ -28,7 +29,7 @@ export function parseSearchResults(html) {
   $('.thread .subject a[href], .style3_subject a[href]').each((_, element) => {
     const href = $(element).attr('href');
     const id = href?.match(/thread-(\d+)\.htm/)?.[1];
-    if (id && !posts.some((post) => post.id === id)) posts.push({ id, title: $(element).text().trim(), url: `https://suenen.com/thread-${id}.htm` });
+    if (id && !posts.some((post) => post.id === id)) posts.push({ id, title: $(element).text().trim(), url: `${SUENEN_ORIGIN}/thread-${id}.htm` });
   });
   return posts;
 }
@@ -44,15 +45,22 @@ export class SuenenClient {
       const state = JSON.parse(await readFile(this.output, 'utf8'));
       for (const cookie of state.cookies) {
         const host = cookie.domain.replace(/^\./, '');
-        if (host !== 'suenen.com') continue;
+        if (!['suenen.com', 'www.suenen.com'].includes(host)) continue;
         if (cookie.expires !== -1 && cookie.expires <= Date.now() / 1000) continue;
-        await this.jar.setCookie(`${cookie.name}=${cookie.value}; Path=${cookie.path}; Secure`, 'https://suenen.com');
+        const attributes = [
+          `${cookie.name}=${cookie.value}`, `Path=${cookie.path}`,
+          ...(cookie.domain.startsWith('.') ? [`Domain=${host}`] : []),
+          ...(cookie.secure ? ['Secure'] : []),
+          ...(cookie.httpOnly ? ['HttpOnly'] : []),
+          ...(cookie.expires !== -1 ? [`Expires=${new Date(cookie.expires * 1000).toUTCString()}`] : []),
+        ];
+        await this.jar.setCookie(attributes.join('; '), `https://${host}`);
       }
     } catch (error) { if (error.code !== 'ENOENT') throw new Error('SUENEN_SESSION_INVALID'); }
   }
   async request(path) {
-    const url = new URL(path, 'https://suenen.com');
-    if (url.origin !== 'https://suenen.com') throw new Error('SUENEN_INVALID_URL');
+    const url = new URL(path, SUENEN_ORIGIN);
+    if (url.origin !== SUENEN_ORIGIN) throw new Error('SUENEN_INVALID_URL');
     return fetch(url, { headers: { Cookie: await this.jar.getCookieString(url.href) }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
   }
   async ensureSession() {

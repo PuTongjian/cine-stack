@@ -1,5 +1,14 @@
 import { test, expect, vi } from 'vitest';
 import { QuarkClient } from './client.mjs';
+test('download links are resolved by file ID at playback time', async () => {
+  const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 200, code: 0, data: [{ download_url: 'https://foo.pds.quark.cn/video' }] })));
+  const client = new QuarkClient({ cookie: 'secret', fetchImpl });
+  await expect(client.downloadUrl('abc123')).resolves.toBe('https://foo.pds.quark.cn/video');
+  expect(fetchImpl.mock.calls[0][0].pathname).toBe('/1/clouddrive/file/download');
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ fids: ['abc123'] });
+  await expect(client.downloadUrl('../secret')).rejects.toThrow('QUARK_INVALID_FILE_ID');
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
 test('existing library folder is reused without remote writes', async () => {
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 200, code: 0, data: { list: [{ fid: 'existing', dir: true, file_name: 'MovieLibrary' }] } })));
   const client = new QuarkClient({ cookie: 'fixture=value', fetchImpl });

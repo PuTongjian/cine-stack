@@ -10,6 +10,7 @@
 - **管理片库**：标记看过，查看已转存电影，独立保存观影与下载状态。
 - **查找资源**：搜索 suenen 站点，解析夸克分享，浏览文件后手动选择转存。
 - **整理收藏**：规范影片命名，生成 NFO，上传海报与背景图，查看任务进度和失败原因。
+- **连接 Jellyfin**：选择云盘源目录和本地输出目录，生成 STRM，自动同步转存资源，也可同步已有文件。
 
 “下载”指转存到自己的夸克网盘，不会将电影视频下载到服务器本地。
 
@@ -33,6 +34,45 @@ npm run dev
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，使用 `ADMIN_PASSWORD` 登录。后端默认监听 `127.0.0.1:3001`。
 
+## Docker Compose 部署
+
+需要 Docker Engine 和 Docker Compose v2。前后端在镜像中构建，无需在宿主机安装 Node.js。
+
+```sh
+cp .env.example .env  # 已有配置时跳过
+# 填写上游凭据、网盘目录 ID 和至少 12 字符的 ADMIN_PASSWORD
+docker compose build
+docker compose up -d
+```
+
+打开 [http://localhost:8080](http://localhost:8080)。容器启动时自动应用数据库迁移；API 通过健康检查后启动前端。数据库、登录会话与 STRM 签名配置持久化到 `./data`，STRM 输出默认挂载到宿主机 `./strm`。
+
+新账号尚未设置独立电影目录时，可用容器执行连接检查：
+
+```sh
+docker compose run --rm api node scripts/check-integrations.mjs
+```
+
+检查会将 `QUARK_LIBRARY_FOLDER_ID` 写入容器内的 `.env`，该临时文件不保留。将命令输出的目录 `id` 填入宿主机 `.env` 的 `QUARK_LIBRARY_FOLDER_ID`，再执行 `docker compose up -d --force-recreate api`。
+
+局域网访问时，将 `.env` 的 `APP_BIND_ADDRESS` 改为 `0.0.0.0`，`APP_ORIGIN` 改为实际访问地址，例如 `http://192.168.1.10:8080`。修改 `WEB_PORT` 时也要更新 `APP_ORIGIN`。公网访问需配置 HTTPS，并将 `APP_ORIGIN` 设置为实际 HTTPS 地址。
+
+更新代码后执行 `docker compose up -d --build`；查看日志使用 `docker compose logs -f`，停止服务使用 `docker compose down`。不要删除 `data/`，否则管理密码、数据库和 STRM 签名将被重新初始化。
+
+## STRM 与 Jellyfin
+
+1. 在「连接设置 → Jellyfin · STRM 映射」开启功能，浏览并选择云盘源目录，默认是影栈的独立电影目录。
+2. 填写本地输出目录。Docker 默认使用 `/app/strm`；宿主机位置由 `.env` 的 `STRM_HOST_DIR` 控制，默认 `./strm`。其他容器内路径需要自行添加对应的持久化挂载。
+3. 填写 **Jellyfin 可访问的影栈地址**，例如 `http://192.168.1.10:8080`。Jellyfin 容器中的 `localhost` 指向它自己，请使用服务器 IP、域名或可访问的容器地址。
+4. 保存配置，点击「立即同步已有资源」。之后每次影栈转存完成都会同步所选目录，即使转存后的元数据上传失败，仍会尝试生成 STRM。
+5. 把宿主机 STRM 目录只读挂载给 Jellyfin，例如 `/srv/cine-stack/strm:/media/cine-stack:ro`，在 Jellyfin 添加「电影」媒体库，目录选择 `/media/cine-stack`，然后扫描媒体库。
+
+映射会递归保留云盘目录结构。通常生成 `影片名.strm`；同目录存在同名、不同格式的视频时生成 `影片名.mkv.strm`、`影片名.mp4.strm`，避免覆盖。已有云盘 NFO、图片和字幕会同步到本地，单文件限制 4MB；本地已有的这些文件会保留。
+
+STRM 中保存的是带签名的固定播放地址，后端在每次播放时获取最新夸克下载链接，并转发 Cookie 与 Range 请求。Jellyfin 无需登录影栈，但视频流量会经过影栈服务器，播放依赖有效的夸克 Cookie 和账号下载权限。请将 STRM 链接视为私有播放凭证。
+
+同步会新增或更新 STRM，不会自动删除旧映射；云盘文件删除、改名或更换源目录后，需手动清理旧文件。更改播放地址后重新同步；关闭映射会停止签名链接播放。映射最多遍历 32 层、10,000 个目录。
+
 ## 配置
 
 | 变量 | 用途 |
@@ -43,10 +83,13 @@ npm run dev
 | `QUARK_ROOT_FOLDER_ID` | 电影目录所在的父目录 ID |
 | `QUARK_LIBRARY_FOLDER_NAME` | 独立电影目录名，默认 `MovieLibrary` |
 | `ADMIN_PASSWORD` | 首次初始化的管理密码，至少 12 字符 |
+| `APP_ORIGIN` | 允许页面写入请求的部署地址 |
+| `APP_BIND_ADDRESS` / `WEB_PORT` | Compose 前端监听地址和端口，默认 `127.0.0.1:8080` |
+| `STRM_HOST_DIR` | Compose 中与 Jellyfin 共享的宿主机目录，默认 `./strm` |
 
 `integrations:check` 会校验连接、复用或创建电影目录，并写入 `QUARK_LIBRARY_FOLDER_ID`。凭据保存在被 Git 忽略的 `.env`；数据库、会话和元数据保存在 `data/`。请勿分享这些文件。
 
-管理密码初始化后以摘要保存在 `data/admin.json`；修改 `.env` 不会自动重置已有密码。当前默认面向本机访问，公网部署需要另行配置 HTTPS 与访问策略。
+管理密码初始化后以摘要保存在 `data/admin.json`；修改 `.env` 不会自动重置已有密码。STRM 映射配置和签名密钥保存在 `data/strm.json`。当前默认面向本机访问，公网部署需要另行配置 HTTPS 与访问策略。
 
 ## 项目结构
 
@@ -63,5 +106,7 @@ docs/                      实施方案与引擎说明
 ## 当前边界
 
 已验证电影查询、站点登录、资源解析、分享浏览和 NFO 上传；完整电影转存流程仍待实际选片验收。多个视频或同格式字幕会保留原名，避免错误整理；极验仅支持当前已适配版本的滑块挑战。
+
+2026-11-06 已修复站点切换至 `www.suenen.com` 和极验 SDK 升级导致的登录失效，真实登录与保存会话的搜索复用均验证通过。当前支持 `v1.9.8-0d53fd`、`v1.9.9-53b07e` 的滑块分支，未知版本仍会停止并提示重新适配。
 
 夸克能力适配自 [CloudSaver](https://github.com/jiangrui1994/CloudSaver)，许可见 [CloudSaver-MIT.txt](docs/licenses/CloudSaver-MIT.txt)。本项目使用 TMDB API，但未经 TMDB 认可或认证。请仅处理有权访问和保存的资源。

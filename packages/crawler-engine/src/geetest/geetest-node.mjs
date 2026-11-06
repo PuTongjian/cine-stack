@@ -52,8 +52,10 @@ export async function nodeCaptcha() {
   if (result.status !== 'success' || data?.captcha_type !== 'slide' || data.pt !== '1') {
     throw new Error(`Unsupported challenge: ${data?.captcha_type}, pt=${data?.pt}`);
   }
-  if (data.static_path !== '/v4/static/v1.9.8-0d53fd' || data.guard || data.lang_reverse) {
-    throw new Error('Unsupported Geetest SDK version or challenge mode.');
+  const legacySdk = data.static_path === '/v4/static/v1.9.8-0d53fd';
+  const currentSdk = data.static_path === '/v4/static/v1.9.9-53b07e';
+  if ((!legacySdk && !currentSdk) || data.guard || data.lang_reverse) {
+    throw new Error(`Unsupported Geetest SDK version or challenge mode: ${data.static_path}`);
   }
   const images = await Promise.all(['bg', 'slice'].map(async (name) => {
     const url = new URL(data[name], 'https://static.geetest.com');
@@ -80,9 +82,18 @@ export async function nodeCaptcha() {
   const gctData = { geetest: 'captcha', lang: 'zh', ep: '123' };
   gctContext.input = gctData;
   vm.runInContext('_gct(input)', gctContext, { timeout: 1000 });
-  // These fields and lot indexes are tied to the SDK version checked above.
-  Object.assign(payload, gctData, { oQ9h: 'VQzx' });
-  payload[lot.slice(16, 19) + lot.slice(13, 16)] = { [lot.slice(12, 19)]: lot.slice(22, 27) };
+  // Marker and lot indexes differ between the two reviewed SDK versions.
+  Object.assign(payload, gctData);
+  if (legacySdk) {
+    payload.oQ9h = 'VQzx';
+    payload[lot.slice(16, 19) + lot.slice(13, 16)] = { [lot.slice(12, 19)]: lot.slice(22, 27) };
+  } else {
+    payload.bzj5 = 'MoPY';
+    payload[lot.slice(28, 29) + lot.slice(17, 18)] = { [lot.slice(5, 10)]: { '': lot.slice(22, 27) } };
+    payload.tc = { mtp: null, te: false, ts: false };
+    payload.tz = { name: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset() };
+    payload.nd = [0, 0, 1, 1, 0, 0, 0];
+  }
   payload.em = { ph: 0, cp: 0, ek: '11', wd: 1, nt: 0, si: 0, sc: 0 };
   const verify = new URL('https://gcaptcha4.geetest.com/verify');
   verify.search = new URLSearchParams({

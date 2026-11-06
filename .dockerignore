@@ -3,7 +3,10 @@ node_modules
 .env.*
 .auth
 data
+strm
 test-results
+reverse-records
+.hallmark
 .agents
 .claude
 .dsh

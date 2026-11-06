@@ -3,8 +3,8 @@ import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { CookieJar } from 'tough-cookie';
 import { nodeCaptcha } from '../geetest/geetest-node.mjs';
 import { resolve, dirname } from 'node:path';
+import { SUENEN_ORIGIN as origin } from './origin.mjs';
 
-const origin = 'https://suenen.com';
 export async function loginSuenen({ username, password, output = resolve(process.env.DATA_DIR || 'data', 'sessions/suenen.json') }) {
   if (!username || !password) throw new Error('Set SUENEN_USERNAME and SUENEN_PASSWORD first.');
   const jar = new CookieJar();

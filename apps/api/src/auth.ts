@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { Request, Response, NextFunction } from 'express';
 import { dataDir } from './config.js';
 
-export async function createAuth() {
+export async function createAuth(authorizeStream?: (req: Request) => boolean) {
   const credentialsFile = resolve(dataDir, 'admin.json');
   let credentials: { salt: string; hash: string; secret: string };
   try { credentials = JSON.parse(await readFile(credentialsFile, 'utf8')); }
@@ -26,6 +26,7 @@ export async function createAuth() {
   const attempts = new Map<string, { count: number; until: number }>();
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.path.startsWith('/api/')) return next();
+    if (['GET', 'HEAD'].includes(req.method) && (req.path === '/api/health' || authorizeStream?.(req))) return next();
     const cookie = req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith('movie_session='))?.slice(14) || '';
     if (req.path === '/api/auth/login' && req.method === 'POST') {
       const address = req.ip || 'local';

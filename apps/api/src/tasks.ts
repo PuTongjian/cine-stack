@@ -7,8 +7,10 @@ import { database } from './database.js';
 import { dataDir } from './config.js';
 import { TmdbService } from './tmdb.js';
 import { buildNfo, movieBasename, movieFolder } from './metadata.js';
+import type { StrmService } from './strm.js';
 
 export class TaskService {
+  strm?: StrmService;
   private tail = Promise.resolve();
   private suenen = new SuenenClient({ username: process.env.SUENEN_USERNAME, password: process.env.SUENEN_PASSWORD, dataDir });
   constructor(private tmdb: TmdbService) {}
@@ -73,6 +75,7 @@ export class TaskService {
     return this.publicTask(task);
   }
   async transfer(id: string) {
+    let transferred = false;
     try {
       let task = await database.task.findUniqueOrThrow({ where: { id } });
       const input = JSON.parse(task.payload);
@@ -92,6 +95,7 @@ export class TaskService {
         task = await database.task.update({ where: { id }, data: { remoteTaskId } });
       }
       await quark.waitTask(task.remoteTaskId!);
+      transferred = true;
       await database.task.update({ where: { id }, data: { stage: 'organizing', result: JSON.stringify({ transferred: true }) } });
       let mediaFolderId = target;
       let files = await quark.listFiles(mediaFolderId);
@@ -138,6 +142,17 @@ export class TaskService {
       }
       await database.task.update({ where: { id }, data: { status: warnings.length ? 'partial' : 'completed', stage: warnings.length ? 'organizing_pending' : 'completed', result: JSON.stringify({ transferred: true, targetFolderId: target, mediaFolderId, metadataUploaded: true, warnings, nfoUrl: `/api/movies/${movie.id}/nfo` }) } });
     } catch (error) { await this.fail(id, error); }
+    finally {
+      if (transferred && this.strm?.getSettings().enabled) {
+        try {
+          const task = await database.task.findUniqueOrThrow({ where: { id } });
+          await database.task.update({ where: { id }, data: { status: 'running', stage: 'generating_strm' } });
+          const mapped = await this.strm.sync();
+          const result = JSON.parse(task.result);
+          await database.task.update({ where: { id }, data: { status: mapped.warnings.length ? 'partial' : task.status, stage: task.stage, result: JSON.stringify({ ...result, strm: mapped, warnings: [...(result.warnings || []), ...mapped.warnings] }) } });
+        } catch (error) { await this.fail(id, error); }
+      }
+    }
   }
   async retry(id: string) {
     const task = await database.task.findUnique({ where: { id } });
@@ -150,7 +165,7 @@ export class TaskService {
   }
   async fail(id: string, error: unknown) {
     const task = await database.task.findUniqueOrThrow({ where: { id } });
-    const message = error instanceof Error && /^(SUENEN_|QUARK_|选中|规范|转存)/.test(error.message) ? error.message : '上游服务暂时不可用，请稍后重试。';
+    const message = error instanceof Error && /^(SUENEN_|QUARK_|STRM_|选中|规范|转存)/.test(error.message) ? error.message : '上游服务暂时不可用，请稍后重试。';
     await database.task.update({ where: { id }, data: { status: task.remoteTaskId ? 'partial' : 'failed', error: message } });
   }
   publicTask(task: any) { const { payload, idempotencyKey, ...rest } = task; return { ...rest, result: JSON.parse(task.result) }; }
