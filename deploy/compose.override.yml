@@ -1,0 +1,10 @@
+services:
+  api:
+    labels:
+      net.unraid.docker.managed: composeman
+      net.unraid.docker.shell: sh
+  web:
+    labels:
+      net.unraid.docker.managed: composeman
+      net.unraid.docker.webui: 'http://[IP]:[PORT:${WEB_PORT:-8080}]'
+      net.unraid.docker.shell: sh

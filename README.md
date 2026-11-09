@@ -39,13 +39,14 @@ npm run dev
 需要 Docker Engine 和 Docker Compose v2。前后端在镜像中构建，无需在宿主机安装 Node.js。
 
 ```sh
+cd deploy
 cp .env.example .env  # 已有配置时跳过
 # 填写上游凭据、网盘目录 ID 和至少 12 字符的 ADMIN_PASSWORD
 docker compose build
 docker compose up -d
 ```
 
-打开 [http://localhost:8080](http://localhost:8080)。容器启动时自动应用数据库迁移；API 通过健康检查后启动前端。数据库、登录会话与 STRM 签名配置持久化到 `./data`，STRM 输出默认挂载到宿主机 `./strm`。
+打开 [http://localhost:8080](http://localhost:8080)。容器启动时自动应用数据库迁移；API 通过健康检查后启动前端。部署配置集中在 `deploy/`，包括 `Dockerfile`、`compose.yml`、Nginx 配置和环境变量模板。数据库、登录会话与 STRM 签名配置持久化到 `deploy/data/`，STRM 输出默认挂载到宿主机 `deploy/strm/`。Compose 命令均在 `deploy/` 下执行，部署凭据填写到 `deploy/.env`。
 
 新账号尚未设置独立电影目录时，可用容器执行连接检查：
 
@@ -53,16 +54,30 @@ docker compose up -d
 docker compose run --rm api node scripts/check-integrations.mjs
 ```
 
-检查会将 `QUARK_LIBRARY_FOLDER_ID` 写入容器内的 `.env`，该临时文件不保留。将命令输出的目录 `id` 填入宿主机 `.env` 的 `QUARK_LIBRARY_FOLDER_ID`，再执行 `docker compose up -d --force-recreate api`。
+检查会将 `QUARK_LIBRARY_FOLDER_ID` 写入容器内的 `.env`，该临时文件不保留。将命令输出的目录 `id` 填入宿主机 `deploy/.env` 的 `QUARK_LIBRARY_FOLDER_ID`，再执行 `docker compose up -d --force-recreate api`。
 
-局域网访问时，将 `.env` 的 `APP_BIND_ADDRESS` 改为 `0.0.0.0`，`APP_ORIGIN` 改为实际访问地址，例如 `http://192.168.1.10:8080`。修改 `WEB_PORT` 时也要更新 `APP_ORIGIN`。公网访问需配置 HTTPS，并将 `APP_ORIGIN` 设置为实际 HTTPS 地址。
+局域网访问时，将 `deploy/.env` 的 `APP_BIND_ADDRESS` 改为 `0.0.0.0`，`APP_ORIGIN` 改为实际访问地址，例如 `http://192.168.1.10:8080`。修改 `WEB_PORT` 时也要更新 `APP_ORIGIN`。公网访问需配置 HTTPS，并将 `APP_ORIGIN` 设置为实际 HTTPS 地址。
 
 更新代码后执行 `docker compose up -d --build`；查看日志使用 `docker compose logs -f`，停止服务使用 `docker compose down`。不要删除 `data/`，否则管理密码、数据库和 STRM 签名将被重新初始化。
+
+### Unraid 部署
+
+项目目录：`/mnt/user/appdata/compose_projects/cine-stack`。该目录保存 `compose.yml`、`compose.override.yml`、`.env`，`source/` 保存构建源码，`data/` 保存应用数据，`strm/` 用于本地 STRM 输出。远端 `.env` 设置 `BUILD_CONTEXT=./source`。Unraid 无法直连 Docker Hub 时，通过 `NODE_IMAGE` 和 `NGINX_IMAGE` 为当前项目指定可访问的镜像源，不修改全局 Docker 设置。`OUTBOUND_PROXY` 可为 TMDB 配置 HTTP 代理；已使用现有局域网代理 `http://192.168.1.254:7890`，夸克和资源站点保持直连。
+
+```sh
+ssh root@192.168.1.150
+cd /mnt/user/appdata/compose_projects/cine-stack
+docker compose up -d --build
+```
+
+访问地址为 [http://192.168.1.150:18080](http://192.168.1.150:18080)。已按同级项目配置 Compose Manager 标签及开机自动启动。管理密码复用本地 `.env` 的 `ADMIN_PASSWORD`；远端凭据保存在权限为 `600` 的项目 `.env` 中。
+
+STRM 宿主机目录为 `/mnt/user/appdata/compose_projects/cine-stack/strm`，容器内目录为 `/app/strm`。Jellyfin 需要将此宿主机目录只读挂载为媒体目录，再添加电影库并扫描。
 
 ## STRM 与 Jellyfin
 
 1. 在「连接设置 → Jellyfin · STRM 映射」开启功能，浏览并选择云盘源目录，默认是影栈的独立电影目录。
-2. 填写本地输出目录。Docker 默认使用 `/app/strm`；宿主机位置由 `.env` 的 `STRM_HOST_DIR` 控制，默认 `./strm`。其他容器内路径需要自行添加对应的持久化挂载。
+2. 填写本地输出目录。Docker 默认使用 `/app/strm`；宿主机位置由 `deploy/.env` 的 `STRM_HOST_DIR` 控制，默认 `deploy/strm/`。其他容器内路径需要自行添加对应的持久化挂载。
 3. 填写 **Jellyfin 可访问的影栈地址**，例如 `http://192.168.1.10:8080`。Jellyfin 容器中的 `localhost` 指向它自己，请使用服务器 IP、域名或可访问的容器地址。
 4. 保存配置，点击「立即同步已有资源」。之后每次影栈转存完成都会同步所选目录，即使转存后的元数据上传失败，仍会尝试生成 STRM。
 5. 把宿主机 STRM 目录只读挂载给 Jellyfin，例如 `/srv/cine-stack/strm:/media/cine-stack:ro`，在 Jellyfin 添加「电影」媒体库，目录选择 `/media/cine-stack`，然后扫描媒体库。
@@ -85,6 +100,7 @@ STRM 中保存的是带签名的固定播放地址，后端在每次播放时获
 | `ADMIN_PASSWORD` | 首次初始化的管理密码，至少 12 字符 |
 | `APP_ORIGIN` | 允许页面写入请求的部署地址 |
 | `APP_BIND_ADDRESS` / `WEB_PORT` | Compose 前端监听地址和端口，默认 `127.0.0.1:8080` |
+| `OUTBOUND_PROXY` / `OUTBOUND_NO_PROXY` | 容器出站 HTTP 代理与直连例外列表，默认不使用代理 |
 | `STRM_HOST_DIR` | Compose 中与 Jellyfin 共享的宿主机目录，默认 `./strm` |
 
 `integrations:check` 会校验连接、复用或创建电影目录，并写入 `QUARK_LIBRARY_FOLDER_ID`。凭据保存在被 Git 忽略的 `.env`；数据库、会话和元数据保存在 `data/`。请勿分享这些文件。
@@ -98,6 +114,7 @@ apps/web/                  React · Vite · Tailwind CSS
 apps/api/                  NestJS · Prisma · SQLite
 packages/crawler-engine/   纯 Node.js 登录、资源解析、夸克适配
 packages/contracts/        共用类型与校验规则
+deploy/                    Docker Compose、镜像构建与 Unraid 部署配置
 docs/                      实施方案与引擎说明
 ```
 

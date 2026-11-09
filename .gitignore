@@ -25,3 +25,5 @@ reverse-records/
 .npmrc
 .cache/
 .vite/
+deploy/data/
+deploy/strm/

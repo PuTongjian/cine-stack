@@ -12,3 +12,7 @@ reverse-records
 .dsh
 **/dist
 .git
+**/.env
+**/.env.*
+deploy/data
+deploy/strm
