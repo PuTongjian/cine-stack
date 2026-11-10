@@ -34,3 +34,10 @@ test('login uses the canonical www origin for every step and saves scoped cookie
     expect(state.cookies[0].domain).toBe('www.suenen.com');
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('actual captcha rejection preserves its actionable error for search tasks', async () => {
+  const { nodeCaptcha } = await import('../geetest/geetest-node.mjs');
+  nodeCaptcha.mockRejectedValueOnce(new Error('SUENEN_验证码校验未通过（SDK /v4/static/future），当前登录参数可能不兼容。'));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('<title>用户登录</title>')));
+  await expect(loginSuenen({ username: 'fixture-user', password: 'fixture-password' })).rejects.toThrow('SUENEN_验证码校验未通过（SDK /v4/static/future），当前登录参数可能不兼容。');
+});

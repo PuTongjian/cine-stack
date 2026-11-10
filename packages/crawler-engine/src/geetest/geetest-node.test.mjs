@@ -35,7 +35,12 @@ test('parses JSON and JSONP without evaluating response code', () => {
   assert.throws(() => parseJsonp('geetest_123({}); process.exit()'), /Unexpected/);
 });
 
-test('current SDK challenges reach verification with the version-specific fields', async () => {
+test.each([
+  ['/v4/static/v1.9.9-53b07e', 'success'],
+  ['/v4/static/v1.9.9-11a9a5', 'success'],
+  ['/v4/static/future', 'success'],
+  ['/v4/static/future', 'fail'],
+])('SDK %s with verification result %s uses the actual server verdict', async (sdk, verdict) => {
   const bg = new PNG({ width: 180, height: 60 }); bg.data.fill(240);
   const piece = new PNG({ width: 20, height: 20 }); piece.data.fill(0);
   for (let y = 4; y <= 15; y++) for (let x = 4; x <= 15; x++) {
@@ -53,29 +58,30 @@ test('current SDK challenges reach verification with the version-specific fields
   });
   vi.stubGlobal('fetch', vi.fn(async (url) => {
     if (url.pathname === '/load') return new Response(originalStringify({ status: 'success', data: {
-      captcha_type: 'slide', pt: '1', static_path: '/v4/static/v1.9.9-53b07e', guard: false, lang_reverse: false,
+      captcha_type: 'slide', pt: '1', static_path: sdk, guard: false, lang_reverse: false,
       gct_path: '/v4/gct/gct4.5a2e755576738ba0499d714db4f1c9e0.js',
       bg: '/fixture-bg.png', slice: '/fixture-piece.png', ypos: 5, lot_number: lot,
       pow_detail: { version: '1', bits: 0, hashfunc: 'md5', datetime: 'fixture' }, payload: 'fixture', process_token: 'fixture', payload_protocol: 1,
     } }));
-    if (url.pathname === '/verify') return new Response(originalStringify({ status: 'success', data: { result: 'success', seccode: { lot_number: lot, captcha_output: 'fixture', pass_token: 'fixture', gen_time: 'fixture' } } }));
+    if (url.pathname === '/verify') return new Response(originalStringify({ status: 'success', data: { result: verdict, seccode: { lot_number: lot, captcha_output: 'fixture', pass_token: 'fixture', gen_time: 'fixture' } } }));
     return new Response(PNG.sync.write(url.pathname === '/fixture-bg.png' ? bg : piece));
   }));
   try {
-    await nodeCaptcha();
+    if (verdict === 'success') await nodeCaptcha();
+    else await assert.rejects(nodeCaptcha(), /SUENEN_.*校验未通过.*future/);
     assert.equal(verification.bzj5, 'MoPY');
     assert.equal(verification[lot.slice(28, 29) + lot.slice(17, 18)][lot.slice(5, 10)][''], lot.slice(22, 27));
     assert.deepEqual(verification.tz, { name: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset() });
   } finally { vi.restoreAllMocks(); vi.unstubAllGlobals(); }
 });
 
-test('unreviewed SDK versions stop before image download or verification', async () => {
+test('unsupported challenge modes stop before image download or verification', async () => {
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'success', data: {
-    captcha_type: 'slide', pt: '1', static_path: '/v4/static/unknown', guard: false, lang_reverse: false,
+    captcha_type: 'slide', pt: '1', static_path: '/v4/static/future', guard: true, lang_reverse: false,
   } })));
   vi.stubGlobal('fetch', fetchImpl);
   try {
-    await assert.rejects(nodeCaptcha(), /Unsupported Geetest SDK version/);
+    await assert.rejects(nodeCaptcha(), /SUENEN_.*挑战模式/);
     assert.equal(fetchImpl.mock.calls.length, 1);
   } finally { vi.unstubAllGlobals(); }
 });

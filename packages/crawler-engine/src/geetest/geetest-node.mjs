@@ -50,12 +50,11 @@ export async function nodeCaptcha() {
   const result = await jsonp(load);
   const data = result.data;
   if (result.status !== 'success' || data?.captcha_type !== 'slide' || data.pt !== '1') {
-    throw new Error(`Unsupported challenge: ${data?.captcha_type}, pt=${data?.pt}`);
+    throw new Error('SUENEN_极验返回了当前登录逻辑不支持的挑战类型或协议。');
   }
   const legacySdk = data.static_path === '/v4/static/v1.9.8-0d53fd';
-  const currentSdk = data.static_path === '/v4/static/v1.9.9-53b07e';
-  if ((!legacySdk && !currentSdk) || data.guard || data.lang_reverse) {
-    throw new Error(`Unsupported Geetest SDK version or challenge mode: ${data.static_path}`);
+  if (data.guard || data.lang_reverse) {
+    throw new Error('SUENEN_极验返回了当前登录逻辑不支持的挑战模式。');
   }
   const images = await Promise.all(['bg', 'slice'].map(async (name) => {
     const url = new URL(data[name], 'https://static.geetest.com');
@@ -71,9 +70,7 @@ export async function nodeCaptcha() {
     device_id: '', lot_number: lot, ...proofOfWork(lot, data.pow_detail),
   };
   const gctContext = vm.createContext({});
-  if (data.gct_path !== '/v4/gct/gct4.5a2e755576738ba0499d714db4f1c9e0.js') {
-    throw new Error('The Geetest GCT version changed; review the new version before use.');
-  }
+  // Reuse the existing GCT and payload logic; the live verification result decides compatibility.
   const gctSource = await readFile(new URL('./vendor/gct.js', import.meta.url), 'utf8');
   if (createHash('sha256').update(gctSource).digest('hex') !== '7e72ac688b03131ba0cd4494a2311a9f425fb0bf97ced5ad86053b65f33a31d8') {
     throw new Error('The retained GCT source digest does not match the reviewed version.');
@@ -82,7 +79,7 @@ export async function nodeCaptcha() {
   const gctData = { geetest: 'captcha', lang: 'zh', ep: '123' };
   gctContext.input = gctData;
   vm.runInContext('_gct(input)', gctContext, { timeout: 1000 });
-  // Marker and lot indexes differ between the two reviewed SDK versions.
+  // Keep the legacy payload for its known version; newer SDKs try the current payload.
   Object.assign(payload, gctData);
   if (legacySdk) {
     payload.oQ9h = 'VQzx';
@@ -102,11 +99,12 @@ export async function nodeCaptcha() {
     payload_protocol: String(data.payload_protocol), pt: data.pt, w: encryptW(payload),
   });
   const verified = await jsonp(verify);
-  console.log(JSON.stringify({ transport: 'Node.js fetch', offset: match.offset, status: verified.status, result: verified.data?.result, error: verified.error }));
-  if (verified.status !== 'success' || verified.data?.result !== 'success') throw new Error('Pure Node.js verification was rejected.');
+  const sdk = /^\/v4\/static\/[\w.-]+$/.test(data.static_path) ? data.static_path : 'unknown';
+  console.log(JSON.stringify({ transport: 'Node.js fetch', sdk, offset: match.offset, status: verified.status, result: verified.data?.result }));
+  if (verified.status !== 'success' || verified.data?.result !== 'success') throw new Error(`SUENEN_验证码校验未通过（SDK ${sdk}），当前登录参数可能不兼容，也可能触发了风控，请重试。`);
   const seccode = verified.data.seccode;
   for (const name of ['lot_number', 'captcha_output', 'pass_token', 'gen_time']) {
-    if (typeof seccode?.[name] !== 'string' || !seccode[name]) throw new Error('Missing Geetest verification field.');
+    if (typeof seccode?.[name] !== 'string' || !seccode[name]) throw new Error('SUENEN_极验校验结果缺少登录所需字段，请检查登录适配。');
   }
   return seccode;
 }

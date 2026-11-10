@@ -27,3 +27,4 @@ reverse-records/
 .vite/
 deploy/data/
 deploy/strm/
+deploy-unraid.sh
