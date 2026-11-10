@@ -44,11 +44,21 @@ export class TaskService {
       const movie = await this.tmdb.detail(task.movieId);
       const results = await this.suenen.search(movie.title);
       const candidates = results.length || !movie.original_title || movie.original_title === movie.title ? results : await this.suenen.search(movie.original_title);
-      for (const item of candidates) await database.resource.upsert({ where: { searchId_shareId: { searchId: id, shareId: item.shareId } }, update: {}, create: {
-        searchId: id, movieId: task.movieId, title: item.title, postUrl: item.postUrl, shareId: item.shareId, passcode: item.passcode,
-      } });
-      await database.task.update({ where: { id }, data: { status: 'completed', stage: candidates.length ? 'awaiting_selection' : 'empty', result: JSON.stringify({ count: candidates.length }) } });
+      await database.task.update({ where: { id }, data: { status: 'completed', stage: candidates.length ? 'awaiting_selection' : 'empty', result: JSON.stringify({ count: candidates.length, posts: candidates }) } });
     } catch (error) { await this.fail(id, error); }
+  }
+  async postResources(searchId: string, postId: string) {
+    const task = await database.task.findUnique({ where: { id: searchId } });
+    if (!task || task.kind !== 'search' || task.status !== 'completed') throw new NotFoundException();
+    const post = JSON.parse(task.result).posts?.find((item: { id: string }) => item.id === postId);
+    if (!post) throw new NotFoundException();
+    const shares = await this.suenen.postShares(postId);
+    if (!shares.length) throw new BadRequestException('该帖子没有可用的夸克网盘链接，请打开来源帖子查看。');
+    const resources = [];
+    for (const share of shares) resources.push(await database.resource.upsert({ where: { searchId_shareId: { searchId, shareId: share.shareId } }, update: {}, create: {
+      searchId, movieId: task.movieId, title: post.title, postUrl: share.postUrl, shareId: share.shareId, passcode: share.passcode,
+    } }));
+    return resources;
   }
   async resourceFiles(id: string, folderId = '0') {
     if (!/^[a-zA-Z0-9-]+$/.test(folderId)) throw new BadRequestException('INVALID_FOLDER');

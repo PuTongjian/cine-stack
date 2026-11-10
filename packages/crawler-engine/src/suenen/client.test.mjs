@@ -7,6 +7,21 @@ test('search results preserve thread identity and remove duplicate links', () =>
   const html = '<div class="style3_subject"><a href="thread-12.htm">Movie</a><a href="thread-12.htm#comments">Comments</a></div>';
   expect(parseSearchResults(html)).toEqual([{ id: '12', title: 'Movie', url: 'https://www.suenen.com/thread-12.htm' }]);
 });
+test('search returns the first ten titles in site order without fetching posts', async () => {
+  const client = new SuenenClient({});
+  const getHtml = vi.spyOn(client, 'getHtml').mockResolvedValue(Array.from({ length: 12 }, (_, index) => `<div class="style3_subject"><a href="thread-${index + 1}.htm">标题 ${index + 1}</a></div>`).join(''));
+  const posts = await client.search('电影');
+  expect(posts.map((post) => post.title)).toEqual(Array.from({ length: 10 }, (_, index) => `标题 ${index + 1}`));
+  expect(getHtml).toHaveBeenCalledExactlyOnceWith('/search-%E7%94%B5%E5%BD%B1-1.htm');
+});
+test('post shares are parsed only for the selected thread and reject invalid IDs', async () => {
+  const client = new SuenenClient({});
+  const getHtml = vi.spyOn(client, 'getHtml').mockResolvedValue('<div class="message"><a href="https://pan.quark.cn/s/abc123?pwd=a123">资源</a></div>');
+  await expect(client.postShares('12')).resolves.toEqual([{ shareId: 'abc123', passcode: 'a123', url: 'https://pan.quark.cn/s/abc123', postUrl: 'https://www.suenen.com/thread-12.htm' }]);
+  expect(getHtml).toHaveBeenCalledExactlyOnceWith('/thread-12.htm');
+  await expect(client.postShares('../my')).rejects.toThrow('SUENEN_INVALID_POST');
+  expect(getHtml).toHaveBeenCalledTimes(1);
+});
 test('restored www sessions are reused by the actual session-check path', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'suenen-client-'));
   await mkdir(join(folder, 'sessions'));

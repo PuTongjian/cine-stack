@@ -4,6 +4,7 @@ import { Module, Controller, Get, Post, Put, Patch, Param, Query, Body, Req, Res
 import { NestFactory } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { database } from './database.js';
 import { dataDir } from './config.js';
 import { TmdbService } from './tmdb.js';
@@ -15,13 +16,14 @@ import { QuarkTvService } from './quark-tv.js';
 import { findDownloadedMovieIds } from './library.js';
 
 const tmdb = new TmdbService();
+const { version } = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
 const tasks = new TaskService(tmdb);
 const quarkTv = new QuarkTvService();
 const strm = new StrmService(() => tasks.quark(), dataDir, quarkTv);
 tasks.strm = strm;
 @Controller('api')
 class ApiController {
-  @Get('health') health() { return { status: 'ok' }; }
+  @Get('health') health() { return { status: 'ok', version }; }
   @Get('movies/trending') trending(@Query() q: any) { return tmdb.trending(q.window, q.page); }
   @Get('movies/search') search(@Query() q: any) { return tmdb.search(q.q, q.page, q.year); }
   @Get('movies/discover') discover(@Query() q: any) { return tmdb.discover(q); }
@@ -52,6 +54,7 @@ class ApiController {
     return database.resource.findMany({ where: { searchId }, orderBy: { createdAt: 'asc' } });
   }
   @Get('resources/:id/files') resourceFiles(@Param('id') id: string, @Query('folderId') folderId?: string) { return tasks.resourceFiles(id, folderId); }
+  @Get('tasks/:id/posts/:postId/resources') postResources(@Param('id') id: string, @Param('postId') postId: string) { return tasks.postResources(id, postId); }
   @Post('transfers') transfer(@Body() body: any) {
     if (typeof body.resourceId !== 'string' || !Array.isArray(body.fileIds) || typeof body.folderId !== 'string') throw new BadRequestException('INVALID_TRANSFER');
     return tasks.createTransfer(body);

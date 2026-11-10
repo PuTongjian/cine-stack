@@ -90,13 +90,11 @@ export class SuenenClient {
   }
   async search(title) {
     const html = await this.getHtml(`/search-${encodeURIComponent(title)}-1.htm`);
-    const posts = parseSearchResults(html).slice(0, 12);
-    const results = [];
-    for (const post of posts) {
-      const html = await this.getHtml(`/thread-${post.id}.htm`);
-      results.push(...parseQuarkLinks(html, post.url).map((link) => ({ ...link, title: post.title })));
-      await new Promise((resolve) => setTimeout(resolve, 400));
-    }
-    return results;
+    return parseSearchResults(html).slice(0, 10);
+  }
+  async postShares(id) {
+    if (!/^\d+$/.test(id)) throw new Error('SUENEN_INVALID_POST');
+    const path = `/thread-${id}.htm`;
+    return parseQuarkLinks(await this.getHtml(path), `${SUENEN_ORIGIN}${path}`);
   }
 }
