@@ -2,6 +2,8 @@
 
 核对日期：2026-11-09。来源为 Jellyfin、OpenList、CloudDrive2、rclone 的官方文档与 Jellyfin 源码；下述结论区分官方能力说明与本项目现场观测。
 
+更新：影栈现已直接接入 Quark TV 扫码与 302 播放。以下普通 Cookie 下载限制是接入前的调查记录；当前授权步骤及播放链路以 [Quark TV 配置](quark-tv.md) 为准，无需为此再部署 OpenList。
+
 ## 结论
 
 现有的 CineStack STRM 方案已具备网盘访问与播放代理功能，不需要为了让 Jellyfin 播放 STRM 再部署 OpenList、CloudDrive2 或 rclone。Jellyfin 读取本地 STRM，STRM 中的 HTTP 地址由 CineStack 在播放时换取夸克下载地址并代理数据。Jellyfin 自身源码将远程 ShortcutPath 转为远程媒体源，并显式对 `.strm` 进行远程探测。[1][2]

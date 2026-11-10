@@ -10,6 +10,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 test('selects a cloud directory, saves the mapping and only syncs saved settings', async () => {
   const initial = { enabled: false, sourceFolderId: 'library', outputDir: '/app/strm', baseUrl: '' };
   vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path === '/integrations/quark-tv') return { authorized: false };
     if (path === '/strm/settings' && options?.method === 'PUT') return JSON.parse(String(options.body));
     if (path === '/strm/settings') return initial;
     if (path === '/strm/folders?folderId=0') return [{ id: 'movies', name: '电影目录' }];

@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+arguments=("$@")
+forwarded=()
+for ((index=0; index<${#arguments[@]}; index++)); do
+  if [[ "${arguments[index]}" == '-i' ]]; then
+    case "${arguments[index+1]}" in
+      http://*/api/strm/stream/*|https://*/api/strm/stream/*)
+        forwarded+=(-request_size 1048576)
+        ;;
+    esac
+  fi
+  forwarded+=("${arguments[index]}")
+done
+exec /usr/lib/jellyfin-ffmpeg/ffmpeg "${forwarded[@]}"

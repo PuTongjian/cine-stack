@@ -2,12 +2,12 @@ import { BadRequestException, BadGatewayException, ConflictException, ForbiddenE
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import type { Request, Response } from 'express';
 import type { QuarkClient } from '@movie/crawler-engine';
 import type { StrmSettings } from '@movie/contracts';
 import { dataDir } from './config.js';
+import { downloadHost, playbackRange, streamVideo } from './video-stream.js';
+export { downloadHost } from './video-stream.js';
 
 const video = /\.(mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|webm|flv|mpg|mpeg|iso)$/i;
 const sidecar = /\.(nfo|jpg|jpeg|png|srt|ass|ssa|sub|vtt)$/i;
@@ -21,20 +21,13 @@ function safeName(name: string, id: string) {
   return clean === name ? clean : `${clean}-${id}`;
 }
 
-export function downloadHost(url: string) {
-  const parsed = new URL(url);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (parsed.port && parsed.port !== '443') ||
-    !['quark.cn', 'quarkcdn.com'].some((host) => parsed.hostname.endsWith(`.${host}`))) throw new Error('STRM_DOWNLOAD_HOST_INVALID');
-  return parsed;
-}
-
 export class StrmService {
   private settings!: StrmSettings;
   private secret!: string;
   private syncing = false;
   private saving = false;
   private configFile: string;
-  constructor(private quark: () => QuarkClient, private storageDir = dataDir) {
+  constructor(private quark: () => QuarkClient, private storageDir = dataDir, private tv?: { downloadUrl(id: string): Promise<string> }) {
     this.configFile = resolve(storageDir, 'strm.json');
   }
   async initialize() {
@@ -112,33 +105,19 @@ export class StrmService {
   }
   async stream(fileId: string, req: Request, res: Response) {
     if (!this.authorize(req)) throw new ForbiddenException('STRM_INVALID_TOKEN');
-    const range = req.headers.range;
-    if (range && !/^bytes=(\d+-\d*|-\d+)$/.test(range)) throw new BadRequestException('STRM_INVALID_RANGE');
-    const abort = new AbortController();
-    const disconnect = () => abort.abort();
-    res.on('close', disconnect);
-    const timeout = setTimeout(() => abort.abort(), 30_000);
+    const range = playbackRange(req.headers.range);
     try {
-      const upstream = await this.download(this.quark(), fileId, { method: req.method, range, signal: abort.signal });
-      clearTimeout(timeout);
-      if (![200, 206, 416].includes(upstream.status)) {
-        await upstream.body?.cancel();
-        throw new Error('STRM_UPSTREAM_UNAVAILABLE');
-      }
-      res.status(upstream.status);
-      for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
-        const value = upstream.headers.get(header);
-        if (value) res.setHeader(header, value);
-      }
+      if (!this.tv) throw new Error('QUARK_TV_AUTH_REQUIRED');
+      const url = downloadHost(await this.tv.downloadUrl(fileId));
       res.setHeader('Cache-Control', 'private, no-store');
-      if (req.method === 'HEAD' || !upstream.body) { await upstream.body?.cancel(); res.end(); }
-      else await pipeline(Readable.fromWeb(upstream.body as any), res);
-    } catch {
-      if (res.headersSent) res.destroy();
-      else if (!res.destroyed) throw new BadGatewayException('STRM_网盘播放暂时不可用，请检查 Cookie 或下载权限。');
-    } finally {
-      clearTimeout(timeout);
-      res.off('close', disconnect);
+      // Browser static playback bypasses FFmpeg; open/large requests need bounded CDN reads here.
+      if (req.method === 'GET' && range.relay) return await streamVideo(url, req, res);
+      res.status(302).setHeader('Location', url.href);
+      res.end();
+    } catch (error: any) {
+      if (res.headersSent) { res.destroy(); return; }
+      if (res.destroyed) return;
+      throw new BadGatewayException(error.message === 'QUARK_TV_AUTH_REQUIRED' ? 'STRM_请先在连接设置中扫码授权 Quark TV。' : 'STRM_Quark TV 播放暂时不可用，请重新授权后重试。');
     }
   }
   async sync() {

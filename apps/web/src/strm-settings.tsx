@@ -3,12 +3,13 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Folder, ChevronLeft } from 'lucide-react';
 import type { StrmSettings } from '@movie/contracts';
 import { api } from './api';
+import { QuarkTvPanel } from './quark-tv';
 
 export function StrmSettingsPanel() {
   const query = useQuery({ queryKey: ['strm-settings'], queryFn: () => api<StrmSettings>('/strm/settings') });
   if (query.isPending) return <p className="muted">正在加载 STRM 配置…</p>;
   if (query.error) return <p className="error" role="alert">{query.error.message}<button onClick={() => query.refetch()}>重试</button></p>;
-  return <StrmForm initial={query.data} />;
+  return <><QuarkTvPanel /><StrmForm initial={query.data} /></>;
 }
 
 function StrmForm({ initial }: { initial: StrmSettings }) {
