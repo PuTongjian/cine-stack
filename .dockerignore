@@ -16,3 +16,6 @@ reverse-records
 **/.env.*
 deploy/data
 deploy/strm
+# Keep the STRM source and regression tests in the build context.
+!apps/api/src/modules/strm/**
+!tests/api/strm/**

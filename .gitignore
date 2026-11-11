@@ -2,8 +2,8 @@ node_modules/
 .env
 .env.*
 !.env.example
-data/
-strm/
+/data/
+/strm/
 dist/
 coverage/
 .auth/

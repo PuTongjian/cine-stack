@@ -1,0 +1,42 @@
+
+**Plotwist Source Available License **
+---
+
+**1. Definitions**
+
+**a. "License"** refers to the terms and conditions for use, reproduction, and distribution as defined by this document.
+
+**b. "Contributor"** means any person or entity that distributes the Software.
+
+**c. "You"** (or "Your") refers to the person or entity using or interacting with the Software under this License.
+
+**d. "Software"** refers to the source code, source documentation, and configurations in the plotwist project repository on GitHub.
+
+**2. Grant of Copyright License**
+
+Subject to the terms and conditions of this License, each Contributor hereby grants you a worldwide, royalty-free, non-exclusive, non-sublicensable license to use, reproduce, and distribute the Software (or portions thereof) provided under this License.
+
+**3. Restrictions**
+
+**a.** The Software is provided under this License solely for personal, academic, or internal evaluation purposes.
+
+**b.** You may not use or permit the use of the Software to operate as, or incorporate the Software into, any form of commercial service, including but not limited to software as a service (SaaS), platform as a service (PaaS), or infrastructure as a service (IaaS).
+
+**c.** You may not reproduce, modify, distribute, sublicense, or sell the Software as part of any commercial service, including any online fee-based service.
+
+**4. Contributions**
+
+Any contributions you make to the plotwist project will be governed by this same License, without additional terms or conditions.
+
+**5. Trademarks**
+
+This License does not grant permission to use the trade names, trademarks, service marks, or product names of the Contributors for the plotwist project, except as required to reproduce the content of copyright notices and to preserve the identity of the plotwist project as prescribed by the community.
+
+**6. Disclaimer of Warranty**
+
+Unless required by applicable law or agreed to in writing, the Software is provided "as is", WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied, including, but not limited to, any warranties or conditions of MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, and NONINFRINGEMENT.
+
+**7. Limitation of Liability**
+
+In no event unless required by applicable law or agreed to in writing will any Contributor be liable for any damages, including any direct, indirect, special, incidental, or consequential damages arising out of any use of the Software or interactions with the Software.
+

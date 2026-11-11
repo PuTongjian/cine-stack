@@ -1,0 +1,15 @@
+export const stages: Record<string, string> = {
+  queued: '等待处理',
+  searching: '搜索资源',
+  awaiting_selection: '等待选择',
+  empty: '未找到资源',
+  validating: '校验资源',
+  transferring: '转存中',
+  organizing: '整理命名',
+  generating_strm: '生成 STRM 映射',
+  generating_metadata: '生成元数据',
+  uploading_metadata: '上传 NFO 与海报',
+  organizing_pending: '已转存，命名需核对',
+  metadata_pending: '已转存，元数据待处理',
+  completed: '已完成',
+}

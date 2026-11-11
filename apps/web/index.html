@@ -1,2 +1,12 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>放映室 · 电影片库</title></head><body><div id="root"></div><script type="module" src="/src/bootstrap.tsx"></script></body></html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="description" content="影栈 CineStack，发现电影、管理片库与记录观影。" />
+    <title>影栈 CineStack · 电影片库</title>
+    <script>try { document.documentElement.classList.toggle('dark', localStorage.getItem('cine-stack-theme') !== 'light') } catch {}</script>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/bootstrap.tsx"></script></body>
+</html>

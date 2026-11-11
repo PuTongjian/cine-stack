@@ -1,13 +1,27 @@
-import { QuarkClient } from '@movie/crawler-engine';
-import { appendFile } from 'node:fs/promises';
-const quark = new QuarkClient({ cookie: process.env.QUARK_COOKIE });
-const parent = process.env.QUARK_ROOT_FOLDER_ID;
-if (!parent) throw new Error('QUARK_ROOT_FOLDER_ID is missing.');
-const folder = await quark.ensureFolder(parent, process.env.QUARK_LIBRARY_FOLDER_NAME || 'MovieLibrary');
-if (process.env.QUARK_LIBRARY_FOLDER_ID !== folder.id) await appendFile('.env', `\nQUARK_LIBRARY_FOLDER_ID=${folder.id}\n`);
-console.log(JSON.stringify({ provider: 'quark', ...folder }));
-const url = new URL('https://api.themoviedb.org/3/trending/movie/week');
-url.search = new URLSearchParams({ api_key: process.env.TMDB_API_KEY, language: 'zh-CN' });
-const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-const data = await response.json();
-console.log(JSON.stringify({ provider: 'tmdb', status: response.status, count: data.results?.length }));
+import { appendFile } from 'node:fs/promises'
+import { QuarkClient } from '@movie/crawler-engine'
+
+const quark = new QuarkClient({ cookie: process.env.QUARK_COOKIE })
+const parent = process.env.QUARK_ROOT_FOLDER_ID
+if (!parent) throw new Error('QUARK_ROOT_FOLDER_ID is missing.')
+const folder = await quark.ensureFolder(
+  parent,
+  process.env.QUARK_LIBRARY_FOLDER_NAME || 'MovieLibrary'
+)
+if (process.env.QUARK_LIBRARY_FOLDER_ID !== folder.id)
+  await appendFile('.env', `\nQUARK_LIBRARY_FOLDER_ID=${folder.id}\n`)
+console.log(JSON.stringify({ provider: 'quark', ...folder }))
+const url = new URL('https://api.themoviedb.org/3/trending/movie/week')
+url.search = new URLSearchParams({
+  api_key: process.env.TMDB_API_KEY,
+  language: 'zh-CN',
+})
+const response = await fetch(url, { signal: AbortSignal.timeout(20_000) })
+const data = await response.json()
+console.log(
+  JSON.stringify({
+    provider: 'tmdb',
+    status: response.status,
+    count: data.results?.length,
+  })
+)

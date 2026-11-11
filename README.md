@@ -116,15 +116,32 @@ TV 授权令牌保存在 `data/quark-tv.json`，重启后自动复用并按需�
 ## 项目结构
 
 ```text
-apps/web/                  React · Vite · Tailwind CSS
-apps/api/                  NestJS · Prisma · SQLite
-packages/crawler-engine/   纯 Node.js 登录、资源解析、夸克适配
-packages/contracts/        共用类型与校验规则
+apps/web/src/
+  app/                     应用入口、路由与布局
+  components/ui/           Plotwist 的 shadcn 基础组件
+  components/layout/       顶部导航与主题切换
+  features/                discover、movies、library、resources、tasks、settings、auth
+  domain/                  电影图片地址、任务阶段等业务规则
+  infrastructure/http/     HTTP 请求
+  styles/                  主题变量、布局、电影目录、业务页面样式
+apps/api/src/
+  app/                     模块装配与服务初始化
+  modules/                 movies、library、resources、tasks、integrations、strm
+  infrastructure/          配置、数据库、认证、类型声明
+packages/crawler-engine/   geetest、quark、suenen、cli 适配模块
+packages/contracts/src/    movies、library、tasks、integrations 共用契约
+tests/
+  web/                     按页面功能分组的 React 交互测试
+  api/                     按 API 业务模块分组的测试
+  crawler-engine/          按引擎适配模块分组的测试
+  helpers/                 浏览器测试环境支持
 deploy/                    Docker Compose、镜像构建与 Unraid 部署配置
 docs/                      实施方案与引擎说明
 ```
 
-常用命令：`npm test`（Vitest）、`npm run typecheck`、`npm run build`、`npm run login:node`（独立站点登录）。爬虫运行无需浏览器。
+前端采用 shadcn `new-york` + Zinc 主题、Space Grotesk 字体，支持深浅色切换。复制来源、适配说明与上游许可见 [样式来源](docs/ui-style-source.md)。
+
+常用命令：`npm run format`（Biome 格式化 + ESLint 修复）、`npm run lint`（两套静态检查）、`npm test`（Vitest）、`npm run test:node`（引擎测试）、`npm run typecheck`、`npm run build`、`npm run check`（完整检查）、`npm run login:node`（独立站点登录）。测试仅放在根目录 `tests/`，不与源码混放。爬虫运行无需浏览器。
 
 ## 当前边界
 
