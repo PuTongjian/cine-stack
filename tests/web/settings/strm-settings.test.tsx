@@ -36,7 +36,7 @@ test('selects a cloud directory, saves the mapping and only syncs saved settings
       return [{ id: 'movies', name: '电影目录' }]
     if (path === '/strm/folders?folderId=movies') return []
     if (path === '/strm/sync')
-      return { count: 2, metadataCount: 1, warnings: [] }
+      return { count: 2, metadataCount: 1, removed: 3, warnings: [] }
     throw new Error(`Unexpected API path: ${path}`)
   })
   const client = new QueryClient({
@@ -81,4 +81,5 @@ test('selects a cloud directory, saves the mapping and only syncs saved settings
   )
   fireEvent.click(sync)
   await screen.findByText('同步完成 · 2 个 STRM · 1 个元数据或字幕文件')
+  await screen.findByText('已清理 3 项过期映射或空目录')
 })

@@ -373,6 +373,9 @@ export function ShareFileBrowser({
               ? `已选 ${selected.length} 项 · ${formatFileSize(knownSize)}${unknownSize ? '，另有大小未知的项目' : ''}`
               : '勾选文件或整个文件夹，再转存到你的网盘'}
           </p>
+          <p className="mt-1">
+            再次转存会替换该电影目录内的原资源；新资源确认到位后，原资源移入回收站。
+          </p>
         </div>
         <Button
           className="shrink-0 gap-2"

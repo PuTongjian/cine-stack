@@ -1,13 +1,17 @@
 ARG NODE_IMAGE=node:24-bookworm-slim
 ARG NGINX_IMAGE=nginx:stable-alpine
 FROM ${NODE_IMAGE} AS build
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/crawler-engine/package.json packages/crawler-engine/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
-RUN npm ci
+# Use bundled Node headers and compile native modules without downloading GitHub prebuilds.
+RUN npm_config_build_from_source=true npm_config_nodedir=/usr/local npm ci
 COPY . .
 RUN npm run db:generate && npm run build
 

@@ -15,7 +15,24 @@ export function TasksPage() {
   const qc = useQueryClient()
   const query = useQuery({
     queryKey: ['tasks'],
-    queryFn: () => api<any[]>('/tasks'),
+    queryFn: async () => {
+      const tasks = await api<any[]>('/tasks')
+      const previous = qc.getQueryData<any[]>(['tasks'])
+      if (
+        tasks.some(
+          task =>
+            task.kind === 'transfer' &&
+            !['queued', 'running'].includes(task.status) &&
+            previous?.some(
+              item =>
+                item.id === task.id &&
+                ['queued', 'running'].includes(item.status)
+            )
+        )
+      )
+        await qc.invalidateQueries({ queryKey: ['library'] })
+      return tasks
+    },
     refetchInterval: 3000,
   })
   const retry = useMutation({
@@ -61,7 +78,12 @@ export function TasksPage() {
             <p>{stages[task.stage] || task.stage}</p>
             {task.error && <p className="error">{task.error}</p>}
             {task.result.strm && (
-              <p>STRM 映射 · {task.result.strm.count} 个文件</p>
+              <p>
+                STRM 映射 · {task.result.strm.count} 个文件
+                {task.result.strm.removed
+                  ? ` · 清理 ${task.result.strm.removed} 项`
+                  : ''}
+              </p>
             )}
             {task.result.warnings?.map((warning: string) => (
               <p key={warning} className="warning">

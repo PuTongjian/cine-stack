@@ -6,6 +6,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:stable-alpine}
+        http_proxy: ${OUTBOUND_PROXY:-}
+        https_proxy: ${OUTBOUND_PROXY:-}
+        no_proxy: ${OUTBOUND_NO_PROXY:-localhost,127.0.0.1,api,web,.quark.cn,.quarkcdn.com,.suenen.com}
       target: api
     env_file: .env
     environment:
@@ -35,6 +38,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:stable-alpine}
+        http_proxy: ${OUTBOUND_PROXY:-}
+        https_proxy: ${OUTBOUND_PROXY:-}
+        no_proxy: ${OUTBOUND_NO_PROXY:-localhost,127.0.0.1,api,web,.quark.cn,.quarkcdn.com,.suenen.com}
       target: web
     ports:
       - '${APP_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:80'

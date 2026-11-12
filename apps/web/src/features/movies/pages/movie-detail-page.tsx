@@ -24,6 +24,8 @@ export function MovieDetail() {
   const library = useQuery({
     queryKey: ['library'],
     queryFn: () => api('/library'),
+    staleTime: 0,
+    refetchInterval: 15_000,
   })
   const entry = library.data?.results?.find(
     (movie: any) => movie.id === Number(id)
@@ -86,7 +88,11 @@ export function MovieDetail() {
               disabled={search.isPending}
             >
               <Search size={17} />
-              {search.isPending ? '正在查找' : '查找资源'}
+              {search.isPending
+                ? '正在查找'
+                : entry?.downloaded
+                  ? '再次下载 / 更换资源'
+                  : '查找资源'}
             </Button>
             <Button
               variant="outline"
@@ -127,8 +133,25 @@ export function MovieDetail() {
             </dd>
             <dt>状态</dt>
             <dd>
-              {entry?.downloaded ? '已转存' : '未下载'}
-              {entry?.watchedAt ? ' · 已看过' : ''}
+              {library.isPending ? (
+                '正在读取文件状态…'
+              ) : library.error ? (
+                '文件状态读取失败'
+              ) : (
+                <>
+                  {entry?.downloaded ? '网盘已存' : '网盘未存'}
+                  {entry?.strm ? ' · STRM 已映射' : ' · STRM 未映射'}
+                  {entry?.watchedAt ? ' · 已看过' : ''}
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={library.isFetching}
+                onClick={() => library.refetch()}
+              >
+                刷新状态
+              </Button>
             </dd>
           </dl>
         </div>

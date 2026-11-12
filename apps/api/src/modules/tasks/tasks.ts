@@ -10,7 +10,13 @@ import {
 } from '@nestjs/common'
 import { dataDir } from '../../infrastructure/config.js'
 import { database } from '../../infrastructure/database.js'
-import { buildNfo, movieBasename, movieFolder } from '../movies/metadata.js'
+import {
+  buildNfo,
+  movieBasename,
+  movieFolder,
+  videoFilePattern as organizedVideo,
+  stagingPrefix,
+} from '../movies/metadata.js'
 import { TmdbService } from '../movies/tmdb.js'
 import type { StrmService } from '../strm/strm.js'
 
@@ -211,7 +217,17 @@ export class TaskService {
     const existing = await database.task.findUnique({
       where: { idempotencyKey: key },
     })
-    if (existing) return this.publicTask(existing)
+    if (existing) {
+      if (['queued', 'running'].includes(existing.status))
+        return this.publicTask(existing)
+      if (existing.stage === 'transferring' && !existing.remoteTaskId)
+        throw new ConflictException('转存结果待核对，不能自动重试。')
+      // A finished task says nothing about the drive now; allow saving the same files again.
+      await database.task.update({
+        where: { id: existing.id },
+        data: { idempotencyKey: null },
+      })
+    }
     let task
     try {
       task = await database.task.create({
@@ -274,15 +290,30 @@ export class TaskService {
         )
         if (selected.length !== input.fileIds.length)
           throw new Error('选中文件已失效，请重新搜索。')
+        // Save into a per-task folder so new files never collide with the copy being replaced.
+        const staging = await quark.ensureFolder(
+          target,
+          `${stagingPrefix}${id}`
+        )
+        const previousFileIds = (await quark.listFiles(target))
+          .filter((file: any) => !file.file_name.startsWith(stagingPrefix))
+          .map((file: any) => file.fid)
+          .filter((fid: string) => fid !== staging.id)
         // Persist the uncertain boundary before a remote write. A restart must never repeat this blindly.
         await database.task.update({
           where: { id },
-          data: { stage: 'transferring' },
+          data: {
+            stage: 'transferring',
+            result: JSON.stringify({
+              stagingFolderId: staging.id,
+              previousFileIds,
+            }),
+          },
         })
         const remoteTaskId = await quark.transfer({
           ...share,
           files: selected,
-          targetFolderId: target,
+          targetFolderId: staging.id,
         })
         task = await database.task.update({
           where: { id },
@@ -291,32 +322,24 @@ export class TaskService {
       }
       await quark.waitTask(task.remoteTaskId!)
       transferred = true
+      const saved = JSON.parse(task.result)
       await database.task.update({
         where: { id },
         data: {
           stage: 'organizing',
-          result: JSON.stringify({ transferred: true }),
+          result: JSON.stringify({ ...saved, transferred: true }),
         },
       })
-      let mediaFolderId = target
-      let files = await quark.listFiles(mediaFolderId)
-      for (
-        let depth = 0;
-        depth < 6 &&
-        !files.some((file: any) =>
-          /\.(mkv|mp4|avi|mov|m4v|ts)$/i.test(file.file_name)
-        );
-        depth++
-      ) {
-        const directories = files.filter(
-          (file: any) => file.dir || file.file_type === 0
-        )
-        if (directories.length !== 1) break
-        mediaFolderId = directories[0].fid
-        files = await quark.listFiles(mediaFolderId)
+      let replaced = 0
+      if (saved.stagingFolderId) {
+        replaced = await this.replaceWithStaged(quark, target, id, saved)
       }
+      const { folderId: mediaFolderId, files } = await this.mediaFolder(
+        quark,
+        target
+      )
       const videos = files.filter((file: any) =>
-        /\.(mkv|mp4|avi|mov|m4v|ts)$/i.test(file.file_name)
+        organizedVideo.test(file.file_name)
       )
       const warnings: string[] = []
       if (videos.length === 1) {
@@ -397,9 +420,11 @@ export class TaskService {
           status: warnings.length ? 'partial' : 'completed',
           stage: warnings.length ? 'organizing_pending' : 'completed',
           result: JSON.stringify({
+            ...saved,
             transferred: true,
             targetFolderId: target,
             mediaFolderId,
+            replaced,
             metadataUploaded: true,
             warnings,
             nfoUrl: `/api/movies/${movie.id}/nfo`,
@@ -435,6 +460,126 @@ export class TaskService {
         }
       }
     }
+  }
+  async mediaFolder(quark: QuarkClient, folderId: string) {
+    let files = await quark.listFiles(folderId)
+    for (
+      let depth = 0;
+      depth < 6 &&
+      !files.some((file: any) => organizedVideo.test(file.file_name));
+      depth++
+    ) {
+      const directories = files.filter(
+        (file: any) =>
+          (file.dir || file.file_type === 0) &&
+          !file.file_name.startsWith(stagingPrefix)
+      )
+      if (directories.length !== 1) break
+      folderId = directories[0].fid
+      files = await quark.listFiles(folderId)
+    }
+    return { folderId, files }
+  }
+  private async containsVideo(
+    quark: QuarkClient,
+    files: any[],
+    visited = new Set<string>(),
+    depth = 0
+  ): Promise<boolean> {
+    if (depth > 32 || visited.size >= 10_000)
+      throw new Error('转存目录层级或数量超限，已保留原资源。')
+    for (const file of files) {
+      if (file.dir || file.file_type === 0) {
+        if (visited.has(file.fid)) continue
+        visited.add(file.fid)
+        if (
+          await this.containsVideo(
+            quark,
+            await quark.listFiles(file.fid),
+            visited,
+            depth + 1
+          )
+        )
+          return true
+      } else if (organizedVideo.test(file.file_name)) return true
+    }
+    return false
+  }
+  /**
+   * Moves the newly saved media into the movie folder and sends the previous copy to the
+   * Quark recycle bin. Each step re-reads the drive, so a retry after a crash resumes safely.
+   */
+  async replaceWithStaged(
+    quark: QuarkClient,
+    target: string,
+    taskId: string,
+    saved: {
+      stagingFolderId: string
+      previousFileIds?: string[]
+      replacementFiles?: { fid: string; file_name: string }[]
+    }
+  ) {
+    const stagingId = saved.stagingFolderId
+    const previousFileIds = saved.previousFileIds || []
+    let current = await quark.listFiles(target)
+    const stagingExists = current.some((file: any) => file.fid === stagingId)
+    const incoming = stagingExists ? await quark.listFiles(stagingId) : []
+    if (!saved.replacementFiles) {
+      if (!(await this.containsVideo(quark, incoming)))
+        throw new Error('转存内容中未识别到视频，已保留原资源，请在网盘核对。')
+      saved.replacementFiles = incoming.map((file: any) => ({
+        fid: file.fid,
+        file_name: file.file_name,
+      }))
+      // Persist IDs and original names before renaming or moving; retries must identify this copy exactly.
+      await database.task.update({
+        where: { id: taskId },
+        data: { result: JSON.stringify({ ...saved, transferred: true }) },
+      })
+    }
+    const replacements = saved.replacementFiles
+    if (
+      !replacements.length ||
+      replacements.some(
+        file => ![...current, ...incoming].some(found => found.fid === file.fid)
+      )
+    )
+      throw new Error('转存的新资源已变动，已停止替换，请在网盘核对。')
+    const pending = incoming.filter((file: any) =>
+      replacements.some(item => item.fid === file.fid)
+    )
+    // Temporary names avoid collisions while the old copy remains available in the movie folder.
+    for (const file of pending) {
+      const name = `${stagingPrefix}${stagingId}-${file.fid}`
+      if (file.file_name !== name) await quark.rename(file.fid, name)
+    }
+    if (pending.length)
+      await quark.move(
+        pending.map((file: any) => file.fid),
+        target
+      )
+    current = await quark.listFiles(target)
+    if (
+      replacements.some(
+        file => !current.some((found: any) => found.fid === file.fid)
+      )
+    )
+      throw new Error('转存的新资源未全部移入，已保留原资源，请重试整理。')
+    if (stagingExists && (await quark.listFiles(stagingId)).length)
+      throw new Error('转存临时目录仍有文件，已保留原资源，请在网盘核对。')
+    const stale = current
+      .filter((file: any) => previousFileIds.includes(file.fid))
+      .map((file: any) => file.fid)
+    if (stale.length) await quark.delete(stale)
+    for (const file of replacements) {
+      if (
+        current.find((found: any) => found.fid === file.fid)?.file_name !==
+        file.file_name
+      )
+        await quark.rename(file.fid, file.file_name)
+    }
+    if (stagingExists) await quark.delete([stagingId])
+    return previousFileIds.length
   }
   async retry(id: string) {
     const task = await database.task.findUnique({ where: { id } })

@@ -1,5 +1,12 @@
 import type { MovieSummary } from '@movie/contracts'
-import { ArrowUpRight, CloudDownload, Eye, Film, Star } from 'lucide-react'
+import {
+  ArrowUpRight,
+  CloudDownload,
+  Eye,
+  Film,
+  Play,
+  Star,
+} from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { image } from '@/domain/movies/image'
@@ -7,7 +14,11 @@ import { image } from '@/domain/movies/image'
 export function MovieCard({
   movie,
 }: {
-  movie: MovieSummary & { watchedAt?: string; downloaded?: boolean }
+  movie: MovieSummary & {
+    watchedAt?: string
+    downloaded?: boolean
+    strm?: boolean
+  }
 }) {
   const [failed, setFailed] = useState(false)
   return (
@@ -31,12 +42,20 @@ export function MovieCard({
           <Star size={11} fill="currentColor" />
           {movie.vote_average?.toFixed(1)}
         </span>
-        {(movie.watchedAt || movie.downloaded) && (
+        {(movie.watchedAt || movie.downloaded || movie.strm) && (
           <span
-            className="movie-state"
-            aria-label={movie.watchedAt ? '已看过' : '已转存'}
+            className="movie-state flex items-center gap-1"
+            aria-label={[
+              movie.downloaded ? '网盘已存' : '',
+              movie.strm ? 'STRM 已映射' : '',
+              movie.watchedAt ? '已看过' : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           >
-            {movie.watchedAt ? <Eye size={15} /> : <CloudDownload size={15} />}
+            {movie.watchedAt && <Eye size={15} />}
+            {movie.downloaded && <CloudDownload size={15} />}
+            {movie.strm && <Play size={15} />}
           </span>
         )}
         <span className="poster-open" aria-hidden="true">

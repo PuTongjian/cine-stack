@@ -166,6 +166,30 @@ export class QuarkClient {
     })
   }
 
+  async move(fileIds, targetFolderId) {
+    if (!fileIds.length) return
+    const result = await this.request('file/move', {
+      method: 'POST',
+      body: {
+        action_type: 1,
+        to_pdir_fid: targetFolderId,
+        filelist: fileIds,
+        exclude_fids: [],
+      },
+    })
+    if (result.data?.task_id) await this.waitTask(result.data.task_id)
+  }
+
+  /** Quark keeps deleted files in its recycle bin. */
+  async delete(fileIds) {
+    if (!fileIds.length) return
+    const result = await this.request('file/delete', {
+      method: 'POST',
+      body: { action_type: 2, filelist: fileIds, exclude_fids: [] },
+    })
+    if (result.data?.task_id) await this.waitTask(result.data.task_id)
+  }
+
   async downloadUrl(fileId) {
     if (!/^[a-zA-Z0-9]+$/.test(fileId)) throw new Error('QUARK_INVALID_FILE_ID')
     const result = await this.request('file/download', {

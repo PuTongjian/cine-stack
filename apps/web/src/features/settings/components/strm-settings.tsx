@@ -1,5 +1,5 @@
 import type { StrmSettings } from '@movie/contracts'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, Folder } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,7 @@ export function StrmSettingsPanel() {
 }
 
 function StrmForm({ initial }: { initial: StrmSettings }) {
+  const qc = useQueryClient()
   const [settings, setSettings] = useState(initial)
   const [saved, setSaved] = useState(initial)
   const [browsing, setBrowsing] = useState(false)
@@ -55,14 +56,18 @@ function StrmForm({ initial }: { initial: StrmSettings }) {
       setSettings(value)
       setSaved(value)
       sync.reset()
+      qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
   const sync = useMutation({
     mutationFn: () =>
-      api<{ count: number; metadataCount: number; warnings: string[] }>(
-        '/strm/sync',
-        { method: 'POST', body: '{}' }
-      ),
+      api<{
+        count: number
+        metadataCount: number
+        removed: number
+        warnings: string[]
+      }>('/strm/sync', { method: 'POST', body: '{}' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   })
   const dirty = JSON.stringify(settings) !== JSON.stringify(saved)
   const busy = save.isPending || sync.isPending
@@ -226,6 +231,9 @@ function StrmForm({ initial }: { initial: StrmSettings }) {
             同步完成 · {sync.data.count} 个 STRM · {sync.data.metadataCount}{' '}
             个元数据或字幕文件
           </p>
+          {!!sync.data.removed && (
+            <p>已清理 {sync.data.removed} 项过期映射或空目录</p>
+          )}
           {sync.data.warnings.map((warning, index) => (
             <p className="warning" key={index}>
               {warning}

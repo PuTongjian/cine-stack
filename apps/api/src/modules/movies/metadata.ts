@@ -10,6 +10,10 @@ export function movieBasename(movie: any) {
   const year = String(movie.release_date || '').slice(0, 4)
   return `${title}${/^\d{4}$/.test(year) ? ` (${year})` : ''}`
 }
+/** Per-task folder inside a movie folder that receives a transfer before it replaces the old copy. */
+export const stagingPrefix = '_incoming-'
+export const videoFilePattern =
+  /\.(mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|webm|flv|mpg|mpeg|iso)$/i
 export function movieFolder(movie: any) {
   return `${movieBasename(movie)} [tmdbid-${movie.id}]`
 }

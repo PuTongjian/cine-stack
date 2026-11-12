@@ -2,9 +2,11 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   lstat,
   mkdir,
+  readdir,
   readFile,
   realpath,
   rename,
+  rm,
   writeFile,
 } from 'node:fs/promises'
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
@@ -18,23 +20,25 @@ import {
 } from '@nestjs/common'
 import type { Request, Response } from 'express'
 import { dataDir } from '../../infrastructure/config.js'
+import { stagingPrefix, videoFilePattern as video } from '../movies/metadata.js'
 import { downloadHost, playbackRange, streamVideo } from './video-stream.js'
 
 export { downloadHost } from './video-stream.js'
 
-const video = /\.(mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|webm|flv|mpg|mpeg|iso)$/i
 const sidecar = /\.(nfo|jpg|jpeg|png|srt|ass|ssa|sub|vtt)$/i
 const fileIdPattern = /^[a-zA-Z0-9]+$/
 
 function safeName(name: string, id: string) {
+  const marker = /\s*\[tmdbid-\d+\]$/i.exec(name)?.[0] || ''
   const characters = [
     ...name
+      .slice(0, name.length - marker.length)
       .normalize('NFC')
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
       .replace(/[. ]+$/g, ''),
   ]
-  while (Buffer.byteLength(characters.join('')) > 180) characters.pop()
-  const clean = characters.join('')
+  while (Buffer.byteLength(characters.join('') + marker) > 180) characters.pop()
+  const clean = characters.join('') + marker
   if (!clean || clean === '.' || clean === '..') return id
   return clean === name ? clean : `${clean}-${id}`
 }
@@ -209,6 +213,74 @@ export class StrmService {
     }
     throw new Error('STRM_TOO_MANY_REDIRECTS')
   }
+  /**
+   * Deletes .strm files whose video left the drive, and whole folders whose drive folder is gone.
+   * Sidecars in live folders stay, since Jellyfin may have saved its own artwork there.
+   */
+  private async reconcile(
+    root: string,
+    expected: Set<string>,
+    folders: Set<string>
+  ) {
+    let removed = 0
+    const sweep = async (directory: string): Promise<void> => {
+      const actual = await realpath(directory)
+      if (actual !== root && !actual.startsWith(`${root}${sep}`))
+        throw new Error('STRM_映射目录包含越界符号链接。')
+      for (const entry of await readdir(actual, { withFileTypes: true })) {
+        const path = resolve(actual, entry.name)
+        if (entry.isDirectory()) {
+          await sweep(path)
+          if (!folders.has(path) && !(await readdir(path)).length) {
+            await rm(path, { recursive: true })
+            removed++
+          }
+        } else if (
+          !expected.has(path) &&
+          (/\.strm$/i.test(entry.name) ||
+            (!folders.has(actual) && sidecar.test(entry.name)))
+        ) {
+          await rm(path)
+          removed++
+        }
+      }
+    }
+    await sweep(root)
+    return removed
+  }
+  /** Movie IDs whose folder in the output directory still holds a .strm file. */
+  async strmMovieIds(folderMovieId: (name: string) => number | undefined) {
+    const found = new Set<number>()
+    const root = await realpath(this.settings.outputDir).catch((error: any) => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })
+    if (!root) return found
+    const walk = async (
+      dir: string,
+      movieId: number | undefined,
+      depth: number
+    ): Promise<void> => {
+      if (depth > 32) return
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith(stagingPrefix)) continue
+        if (entry.isDirectory())
+          await walk(
+            resolve(dir, entry.name),
+            movieId ?? folderMovieId(entry.name),
+            depth + 1
+          )
+        else if (
+          entry.isFile() &&
+          movieId !== undefined &&
+          /\.strm$/i.test(entry.name)
+        )
+          found.add(movieId)
+      }
+    }
+    await walk(root, undefined, 0)
+    return found
+  }
   async stream(fileId: string, req: Request, res: Response) {
     if (!this.authorize(req)) throw new ForbiddenException('STRM_INVALID_TOKEN')
     const range = playbackRange(req.headers.range)
@@ -247,8 +319,20 @@ export class StrmService {
     try {
       await mkdir(settings.outputDir, { recursive: true })
       const root = await realpath(settings.outputDir)
+      const fromData = relative(root, await realpath(this.storageDir))
+      if (
+        !fromData ||
+        (!fromData.startsWith(`..${sep}`) &&
+          fromData !== '..' &&
+          !isAbsolute(fromData))
+      )
+        throw new BadRequestException(
+          'STRM_输出目录不能是数据目录或它的父目录。'
+        )
       const quark = this.quark()
       const visited = new Set<string>()
+      const expected = new Set<string>()
+      const folders = new Set<string>()
       const walk = async (
         folderId: string,
         segments: string[],
@@ -263,6 +347,7 @@ export class StrmService {
         const actual = await realpath(directory)
         if (actual !== root && !actual.startsWith(`${root}${sep}`))
           throw new Error('STRM_映射目录包含越界符号链接。')
+        folders.add(actual)
         const files = await quark.listFiles(folderId)
         for (const file of files) {
           if (
@@ -271,6 +356,7 @@ export class StrmService {
             typeof file.file_name !== 'string'
           )
             throw new Error('STRM_网盘文件信息无效。')
+          if (file.file_name.startsWith(stagingPrefix)) continue
           const isDirectory = file.dir || file.file_type === 0
           const extension = isDirectory ? '' : extname(file.file_name)
           const name = `${safeName(file.file_name.slice(0, file.file_name.length - extension.length), file.fid)}${extension}`
@@ -295,8 +381,10 @@ export class StrmService {
             const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`
             await writeFile(temp, content, { flag: 'wx' })
             await rename(temp, path)
+            expected.add(path)
             count++
           } else if (sidecar.test(file.file_name)) {
+            expected.add(resolve(actual, name))
             if (file.size > 4 * 1024 * 1024) {
               warnings.push(`${name} 超过 4MB，已跳过。`)
               continue
@@ -334,7 +422,14 @@ export class StrmService {
         }
       }
       await walk(settings.sourceFolderId, [], 0)
-      return { count, metadataCount, outputDir: settings.outputDir, warnings }
+      const removed = await this.reconcile(root, expected, folders)
+      return {
+        count,
+        metadataCount,
+        removed,
+        outputDir: settings.outputDir,
+        warnings,
+      }
     } catch (error: any) {
       if (error.message?.startsWith('STRM_')) throw error
       throw new BadGatewayException(

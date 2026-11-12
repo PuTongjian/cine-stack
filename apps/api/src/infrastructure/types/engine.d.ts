@@ -36,6 +36,8 @@ declare module '@movie/crawler-engine' {
     transfer(input: any): Promise<string>
     waitTask(taskId: string): Promise<any>
     rename(fileId: string, name: string): Promise<void>
+    move(fileIds: string[], targetFolderId: string): Promise<void>
+    delete(fileIds: string[]): Promise<void>
     uploadSmallFile(
       folderId: string,
       name: string,

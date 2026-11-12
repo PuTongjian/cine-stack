@@ -88,3 +88,41 @@ test('metadata upload enforces its small-file boundary before network access', a
   ).rejects.toThrow('QUARK_METADATA_SIZE_LIMIT')
   expect(fetchImpl).not.toHaveBeenCalled()
 })
+
+test('move and recycle-bin deletion wait for remote tasks and skip empty batches', async () => {
+  const fetchImpl = vi.fn(
+    async url =>
+      new Response(
+        JSON.stringify({
+          status: 200,
+          code: 0,
+          data: url.pathname.endsWith('/task')
+            ? { status: 2 }
+            : { task_id: 'operation' },
+        })
+      )
+  )
+  const client = new QuarkClient({ cookie: 'fixture=value', fetchImpl })
+  await client.move([], 'target')
+  await client.delete([])
+  expect(fetchImpl).not.toHaveBeenCalled()
+  await client.move(['new'], 'target')
+  await client.delete(['old'])
+  expect(fetchImpl.mock.calls.map(([url]) => url.pathname)).toEqual([
+    '/1/clouddrive/file/move',
+    '/1/clouddrive/task',
+    '/1/clouddrive/file/delete',
+    '/1/clouddrive/task',
+  ])
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+    action_type: 1,
+    to_pdir_fid: 'target',
+    filelist: ['new'],
+    exclude_fids: [],
+  })
+  expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({
+    action_type: 2,
+    filelist: ['old'],
+    exclude_fids: [],
+  })
+})

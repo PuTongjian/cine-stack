@@ -23,6 +23,7 @@ vi.mock('../../../apps/api/src/infrastructure/config.js', () => ({
 }))
 
 import { createAuth } from '../../../apps/api/src/infrastructure/auth.js'
+import { movieIdForFolder } from '../../../apps/api/src/modules/library/library.js'
 import {
   downloadHost,
   StrmService,
@@ -159,6 +160,148 @@ test('long Unicode names fit local filesystems and sanitized sidecars retain the
   const names = await readdir(resolve(root, 'output'))
   expect(names).toContain('字幕_简体-s1.srt')
   expect(names.every(name => Buffer.byteLength(name) <= 255)).toBe(true)
+})
+
+test('STRM state survives restart and disabling playback, and follows local file deletions', async () => {
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library'
+      ? [{ fid: 'folder', file_name: 'Film (2024) [tmdbid-42]', dir: true }]
+      : [{ fid: 'video', file_name: 'Film.mkv' }]
+  )
+  await service.sync()
+  await service.saveSettings({ ...service.getSettings(), enabled: false })
+  const restarted = new StrmService(() => quark as any)
+  await restarted.initialize()
+  const identify = (name: string) => movieIdForFolder(name, new Map())
+  expect(await restarted.strmMovieIds(identify)).toEqual(new Set([42]))
+  await rm(resolve(root, 'output', 'Film (2024) [tmdbid-42]', 'Film.strm'))
+  expect(await restarted.strmMovieIds(identify)).toEqual(new Set())
+})
+
+test('STRM state recognizes sanitized and truncated movie directory names', async () => {
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library'
+      ? [
+          {
+            fid: 'folder',
+            file_name: `${'影'.repeat(90)}: (2024) [tmdbid-42]`,
+            dir: true,
+          },
+        ]
+      : [{ fid: 'video', file_name: 'Film.mkv' }]
+  )
+  await service.sync()
+  expect(
+    await service.strmMovieIds(name => movieIdForFolder(name, new Map()))
+  ).toEqual(new Set([42]))
+})
+
+test('sync removes obsolete format variants and links to the replacement file ID', async () => {
+  quark.listFiles.mockResolvedValue([
+    { fid: 'old', file_name: 'Film.mkv' },
+    { fid: 'other', file_name: 'Film.mp4' },
+  ])
+  await service.sync()
+  expect(await readdir(resolve(root, 'output'))).toEqual([
+    'Film.mkv.strm',
+    'Film.mp4.strm',
+  ])
+  quark.listFiles.mockResolvedValue([{ fid: 'new', file_name: 'Film.webm' }])
+  expect(await service.sync()).toMatchObject({ count: 1, removed: 2 })
+  expect(await readdir(resolve(root, 'output'))).toEqual(['Film.strm'])
+  expect(
+    await readFile(resolve(root, 'output', 'Film.strm'), 'utf8')
+  ).toContain('/new?')
+})
+
+test('sync cleans removed movie folders but preserves sidecars in live folders and unrelated files', async () => {
+  const output = resolve(root, 'output')
+  await mkdir(resolve(output, 'removed'), { recursive: true })
+  await mkdir(resolve(output, 'live'), { recursive: true })
+  await writeFile(resolve(output, 'removed', 'old.strm'), 'old')
+  await writeFile(resolve(output, 'removed', 'poster.jpg'), 'artwork')
+  await writeFile(resolve(output, 'live', 'poster.jpg'), 'custom artwork')
+  await writeFile(resolve(output, 'live', 'obsolete.STRM'), 'old')
+  await writeFile(resolve(output, 'notes.txt'), 'keep')
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library'
+      ? [{ fid: 'folder', file_name: 'live', dir: true }]
+      : [{ fid: 'video', file_name: 'Film.mkv' }]
+  )
+  expect(await service.sync()).toMatchObject({ count: 1, removed: 4 })
+  expect(await readdir(output)).toEqual(['live', 'notes.txt'])
+  expect(await readFile(resolve(output, 'live', 'poster.jpg'), 'utf8')).toBe(
+    'custom artwork'
+  )
+})
+
+test('a failed drive scan never sweeps old mappings using an incomplete listing', async () => {
+  await writeFile(
+    resolve(root, 'output', 'existing.strm'),
+    'keep until a full scan succeeds'
+  )
+  quark.listFiles.mockImplementation(async id => {
+    if (id === 'library')
+      return [{ fid: 'broken', file_name: 'Film', dir: true }]
+    throw new Error('QUARK_HTTP_503')
+  })
+  await expect(service.sync()).rejects.toThrow('STRM_同步失败')
+  expect(await readFile(resolve(root, 'output', 'existing.strm'), 'utf8')).toBe(
+    'keep until a full scan succeeds'
+  )
+})
+
+test('sync preserves empty directories that still exist on the drive', async () => {
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library' ? [{ fid: 'empty', file_name: 'Empty', dir: true }] : []
+  )
+  expect(await service.sync()).toMatchObject({ count: 0, removed: 0 })
+  expect(await readdir(resolve(root, 'output'))).toEqual(['Empty'])
+})
+
+test('an output symlink cannot make reconciliation sweep the application data directory', async () => {
+  const alias = resolve(root, 'alias')
+  await symlink(fixture.storageDir, alias)
+  await service.saveSettings({ ...service.getSettings(), outputDir: alias })
+  await mkdir(resolve(fixture.storageDir, 'metadata'))
+  await writeFile(
+    resolve(fixture.storageDir, 'metadata', 'movie.nfo'),
+    'private metadata'
+  )
+  await expect(service.sync()).rejects.toThrow('输出目录不能是数据目录')
+  expect(
+    await readFile(resolve(fixture.storageDir, 'metadata', 'movie.nfo'), 'utf8')
+  ).toBe('private metadata')
+})
+
+test('sync and state scanning ignore replacement staging folders and temporary files', async () => {
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library'
+      ? [{ fid: 'folder', file_name: 'Film [tmdbid-42]', dir: true }]
+      : [
+          { fid: 'staging', file_name: '_incoming-task', dir: true },
+          { fid: 'pending', file_name: '_incoming-task-pending.mkv' },
+        ]
+  )
+  expect(await service.sync()).toMatchObject({ count: 0 })
+  expect(quark.listFiles).not.toHaveBeenCalledWith('staging')
+  const identify = (name: string) => movieIdForFolder(name, new Map())
+  expect(await service.strmMovieIds(identify)).toEqual(new Set())
+})
+
+test('deleting the output directory clears actual STRM state and sync restores existing cloud videos', async () => {
+  quark.listFiles.mockImplementation(async id =>
+    id === 'library'
+      ? [{ fid: 'folder', file_name: 'Film [tmdbid-42]', dir: true }]
+      : [{ fid: 'video', file_name: 'Film.mkv' }]
+  )
+  const identify = (name: string) => movieIdForFolder(name, new Map())
+  await service.sync()
+  expect(await service.strmMovieIds(identify)).toEqual(new Set([42]))
+  await rm(resolve(root, 'output'), { recursive: true })
+  expect(await service.strmMovieIds(identify)).toEqual(new Set())
+  await service.sync()
+  expect(await service.strmMovieIds(identify)).toEqual(new Set([42]))
 })
 
 test('rejects credential-bearing, private and unrelated download hosts', () => {
