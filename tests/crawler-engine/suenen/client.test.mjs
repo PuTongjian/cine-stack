@@ -15,7 +15,7 @@ test('search results preserve thread identity and remove duplicate links', () =>
     { id: '12', title: 'Movie', url: 'https://www.suenen.com/thread-12.htm' },
   ])
 })
-test('search returns the first ten titles in site order without fetching posts', async () => {
+test('search returns all titles in site order without fetching posts', async () => {
   const client = new SuenenClient({})
   const getHtml = vi
     .spyOn(client, 'getHtml')
@@ -28,11 +28,141 @@ test('search returns the first ten titles in site order without fetching posts',
     )
   const posts = await client.search('电影')
   expect(posts.map(post => post.title)).toEqual(
-    Array.from({ length: 10 }, (_, index) => `标题 ${index + 1}`)
+    Array.from({ length: 12 }, (_, index) => `标题 ${index + 1}`)
   )
   expect(getHtml).toHaveBeenCalledExactlyOnceWith(
     '/search-%E7%94%B5%E5%BD%B1-1.htm'
   )
+})
+
+test('search follows same-query pagination and deduplicates threads across pages', async () => {
+  const client = new SuenenClient({})
+  const getHtml = vi
+    .spyOn(client, 'getHtml')
+    .mockResolvedValueOnce(
+      '<div class="style3_subject"><a href="thread-1.htm">一</a></div><ul class="pagination"><a href="search-Movie-1.htm">1</a><a href="search-Movie-2.htm">2</a><a href="https://evil.test/search-Movie-3.htm">3</a></ul>'
+    )
+    .mockResolvedValueOnce(
+      '<div class="style3_subject"><a href="thread-1.htm">一</a><a href="thread-2.htm">二</a></div><ul class="pagination"><a href="search-Movie-1.htm">1</a></ul>'
+    )
+  expect((await client.search('Movie')).map(post => post.id)).toEqual([
+    '1',
+    '2',
+  ])
+  expect(getHtml.mock.calls.map(([path]) => path)).toEqual([
+    '/search-Movie-1.htm',
+    '/search-Movie-2.htm',
+  ])
+})
+
+const gated =
+  '<form id="quick_reply_form" action="post-create-12-1.htm"><input type="hidden" name="doctype" value="1"><textarea name="message"></textarea></form><div class="message">本帖含有隐藏内容，请回复后再查看</div>'
+
+test('a rejected JSON reply reports the rejection and remains retryable', async () => {
+  const client = new SuenenClient({})
+  vi.spyOn(client, 'getHtml').mockResolvedValue(gated)
+  const request = vi
+    .spyOn(client, 'request')
+    .mockImplementation(async () =>
+      Response.json({ code: 'message', message: '两次发帖间隔不能少于 30 秒' })
+    )
+  await expect(
+    client.postSharesWithOptions('12', { autoReply: true })
+  ).rejects.toThrow('SUENEN_REPLY_RATE_LIMITED')
+  await expect(
+    client.postSharesWithOptions('12', { autoReply: true })
+  ).rejects.toThrow('SUENEN_REPLY_RATE_LIMITED')
+  expect(request).toHaveBeenCalledTimes(2)
+})
+
+test('a successful reply that leaves the post gated is not reported as missing Quark links', async () => {
+  const client = new SuenenClient({})
+  vi.spyOn(client, 'getHtml').mockResolvedValue(gated)
+  const request = vi
+    .spyOn(client, 'request')
+    .mockImplementation(async () =>
+      Response.json({ code: 0, message: '<li>回复</li>' })
+    )
+  await expect(
+    client.postSharesWithOptions('12', { autoReply: true })
+  ).rejects.toThrow('SUENEN_REPLY_NOT_UNLOCKED')
+  await expect(
+    client.postSharesWithOptions('12', { autoReply: true })
+  ).rejects.toThrow('SUENEN_REPLY_NOT_UNLOCKED')
+  expect(request).toHaveBeenCalledOnce()
+})
+
+test('concurrent reads of one gated post submit only one reply', async () => {
+  const client = new SuenenClient({})
+  let unlocked = false
+  vi.spyOn(client, 'getHtml').mockImplementation(async () =>
+    unlocked
+      ? '<div class="message"><a href="https://pan.quark.cn/s/visible">资源</a></div>'
+      : gated
+  )
+  const request = vi.spyOn(client, 'request').mockImplementation(async () => {
+    unlocked = true
+    return Response.json({ code: 0, message: '<li>回复</li>' })
+  })
+  const results = await Promise.all([
+    client.postSharesWithOptions('12', { autoReply: true }),
+    client.postSharesWithOptions('12', { autoReply: true }),
+  ])
+  expect(results.every(shares => shares[0]?.shareId === 'visible')).toBe(true)
+  expect(request).toHaveBeenCalledOnce()
+})
+
+test.each([
+  [
+    { code: 'message', message: '回复内容太短' },
+    'SUENEN_REPLY_CONTENT_REJECTED',
+  ],
+  [{ code: -1, message: '请先登录' }, 'SUENEN_REPLY_LOGIN_REQUIRED'],
+  [{ code: -1, message: '本主题禁止回复' }, 'SUENEN_REPLY_REJECTED'],
+])(
+  'reply business errors are checked even with HTTP 200: %j',
+  async (result, code) => {
+    const client = new SuenenClient({})
+    client.ready = true
+    vi.spyOn(client, 'getHtml').mockResolvedValue(gated)
+    vi.spyOn(client, 'request').mockResolvedValue(Response.json(result))
+    await expect(
+      client.postSharesWithOptions('12', { autoReply: true })
+    ).rejects.toThrow(code)
+    expect(client.repliedPosts.has('12')).toBe(false)
+    if (code === 'SUENEN_REPLY_LOGIN_REQUIRED') expect(client.ready).toBe(false)
+  }
+)
+
+test('reply forms must belong to the selected thread', async () => {
+  const client = new SuenenClient({})
+  vi.spyOn(client, 'getHtml').mockResolvedValue(
+    gated.replace('post-create-12-1.htm', 'post-create-99-1.htm')
+  )
+  const request = vi.spyOn(client, 'request')
+  await expect(
+    client.postSharesWithOptions('12', { autoReply: true })
+  ).rejects.toThrow('SUENEN_INVALID_REPLY_FORM')
+  expect(request).not.toHaveBeenCalled()
+})
+
+test('empty native hidden values receive the same reply defaults', async () => {
+  const client = new SuenenClient({})
+  const request = vi
+    .spyOn(client, 'request')
+    .mockResolvedValue(Response.json({ code: 0, message: '<li>回复</li>' }))
+  await client.replyToPost(
+    '12',
+    '<form id="quick_reply_form" action="post-create-12.htm"><input type="hidden" name="doctype"><input type="hidden" name="quotepid"><input type="hidden" name="csrf" value="fixture"></form>'
+  )
+  const body = request.mock.calls[0][1].body
+  expect(Object.fromEntries(body)).toEqual({
+    doctype: '1',
+    quotepid: '0',
+    csrf: 'fixture',
+    return_html: '1',
+    message: '感谢分享！',
+  })
 })
 test('post shares are parsed only for the selected thread and reject invalid IDs', async () => {
   const client = new SuenenClient({})

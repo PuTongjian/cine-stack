@@ -135,6 +135,26 @@ test('folder transfer sends only the user selection with its current parent', as
     })
   )
 })
+test('a movie and subtitle are submitted together in one transfer', async () => {
+  mockFiles()
+  renderBrowser()
+  fireEvent.click(
+    await screen.findByRole('checkbox', { name: '选择 large.mkv' })
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: '选择 small.srt' }))
+  fireEvent.click(screen.getByRole('button', { name: '转存选中项 (2)' }))
+  await screen.findByText('任务已提交')
+  expect(
+    JSON.parse(
+      vi.mocked(api).mock.calls.find(([path]) => path === '/transfers')![1]!
+        .body as string
+    )
+  ).toEqual({
+    resourceId: 'resource',
+    folderId: '0',
+    fileIds: ['large', 'small'],
+  })
+})
 test('a failed directory can be retried without enabling a transfer', async () => {
   vi.mocked(api)
     .mockRejectedValueOnce(new Error('读取失败'))

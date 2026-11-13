@@ -21,7 +21,7 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-const posts = Array.from({ length: 10 }, (_, index) => ({
+const posts = Array.from({ length: 23 }, (_, index) => ({
   id: String(index + 1),
   title: `资源标题 ${index + 1}`,
   url: `https://www.suenen.com/thread-${index + 1}.htm`,
@@ -60,15 +60,15 @@ function mockSearch() {
     throw new Error(`Unexpected API path: ${path}`)
   })
 }
-test('lists ten clickable titles and waits for manual file selection before transferring', async () => {
+test('lists all clickable titles and waits for manual file selection before transferring', async () => {
   mockSearch()
   renderResources()
-  await screen.findByRole('button', { name: '资源标题 10' })
+  await screen.findByRole('button', { name: '资源标题 23' })
   expect(
     screen
       .getAllByRole('button')
       .filter(button => button.classList.contains('resource-title'))
-  ).toHaveLength(10)
+  ).toHaveLength(23)
   expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
     '/tasks/search',
   ])

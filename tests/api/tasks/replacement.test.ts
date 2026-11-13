@@ -120,6 +120,95 @@ test('replaces a previous download even when the video extension changes', async
   })
 })
 
+test.each(['folder', 'video and subtitle'])(
+  'waits for delayed move listings when saving a %s before removing the old copy',
+  async selection => {
+    vi.useFakeTimers()
+    try {
+      const incoming =
+        selection === 'folder'
+          ? [{ fid: 'disc', file_name: 'Movie folder', dir: true }]
+          : [
+              { fid: 'new', file_name: 'release.mkv' },
+              { fid: 'sub', file_name: 'release.srt' },
+            ]
+      const { service, task, tree, quark } = stagedTransfer(incoming)
+      if (selection === 'folder')
+        tree.set('disc', [{ fid: 'video', file_name: 'release.mkv' }])
+      const listFiles = quark.listFiles.getMockImplementation()!
+      const move = quark.move.getMockImplementation()!
+      let staleTarget: any[] | undefined
+      let staleSource: any[] | undefined
+      quark.move.mockImplementation(async (ids, target) => {
+        staleTarget = await listFiles(target)
+        staleSource = await listFiles('staging')
+        await move(ids, target)
+      })
+      quark.listFiles.mockImplementation(async folder => {
+        if (folder === 'movie' && staleTarget) {
+          const stale = staleTarget
+          staleTarget = undefined
+          return stale
+        }
+        if (folder === 'staging' && staleSource) {
+          const stale = staleSource
+          staleSource = undefined
+          return stale
+        }
+        return listFiles(folder)
+      })
+      const pending = service.transfer('replacement')
+      await vi.runAllTimersAsync()
+      await pending
+      expect(task.status).toBe('completed')
+      expect(
+        tree
+          .get('movie')
+          ?.map(file => file.fid)
+          .sort()
+      ).toEqual(incoming.map(file => file.fid).sort())
+      expect(JSON.parse(task.result).metadataUploaded).toBe(true)
+      expect(
+        tree.get('movie')?.some(file => file.file_name.startsWith('_incoming-'))
+      ).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+test('waits for all selected files before recording the replacement, including delayed subtitles', async () => {
+  vi.useFakeTimers()
+  try {
+    const { service, task, tree, quark } = stagedTransfer([
+      { fid: 'new', file_name: 'release.mkv' },
+      { fid: 'sub', file_name: 'release.srt' },
+    ])
+    task.payload = JSON.stringify({ fileIds: ['sourcevideo', 'sourcesub'] })
+    const listFiles = quark.listFiles.getMockImplementation()!
+    let firstRead = true
+    quark.listFiles.mockImplementation(async folder => {
+      const files = await listFiles(folder)
+      if (folder === 'staging' && firstRead) {
+        firstRead = false
+        return files.slice(0, 1)
+      }
+      return files
+    })
+    const pending = service.transfer('replacement')
+    await vi.runAllTimersAsync()
+    await pending
+    expect(task.status).toBe('completed')
+    expect(tree.get('movie')).toEqual([
+      { fid: 'new', file_name: 'Film (2024).mkv' },
+      { fid: 'sub', file_name: 'Film (2024).srt' },
+    ])
+    expect(JSON.parse(task.result).replacementFiles).toHaveLength(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('a failed promotion preserves the original download and retry finishes the replacement', async () => {
   const { service, tree, quark, task } = stagedTransfer([
     { fid: 'new', file_name: 'Film (2024).mkv' },

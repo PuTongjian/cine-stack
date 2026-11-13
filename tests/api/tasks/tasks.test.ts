@@ -219,6 +219,32 @@ test('reply-gated sources return an actionable conflict rather than claiming the
   })
   expect(db.resource.upsert).not.toHaveBeenCalled()
 })
+test.each([
+  ['SUENEN_REPLY_RATE_LIMITED', '回复频率'],
+  ['SUENEN_REPLY_CONTENT_REJECTED', '自动回复内容'],
+  ['SUENEN_REPLY_NOT_UNLOCKED', '仍未解锁'],
+  ['SUENEN_REPLY_LOGIN_REQUIRED', '登录已失效'],
+  ['SUENEN_REPLY_FORM_MISSING', '回复入口'],
+])(
+  'reply failure %s produces an actionable conflict',
+  async (code, message) => {
+    db.task.findUnique.mockResolvedValue({
+      kind: 'search',
+      status: 'completed',
+      result: JSON.stringify({ posts: [{ id: '12', title: 'Film' }] }),
+    })
+    suenen.postSharesWithOptions.mockRejectedValueOnce(new Error(code))
+    const error = await new TaskService({} as any)
+      .postResources('search', '12')
+      .catch(error => error)
+    expect(error.getStatus()).toBe(409)
+    expect(error.getResponse()).toMatchObject({
+      code,
+      message: expect.stringContaining(message),
+    })
+    expect(db.resource.upsert).not.toHaveBeenCalled()
+  }
+)
 test('file listing preserves byte sizes, including empty files and unknown folder sizes', async () => {
   db.resource.findUnique.mockResolvedValue({
     shareId: 'share',

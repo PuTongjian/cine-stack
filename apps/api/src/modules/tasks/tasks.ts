@@ -133,6 +133,25 @@ export class TaskService {
             message:
               '已自动回复，但原帖没有可用的夸克网盘链接；请打开原帖查看其他网盘链接。',
           })
+        const replyErrors: Record<string, string> = {
+          SUENEN_REPLY_RATE_LIMITED:
+            '资源站点限制了回复频率，请稍后点击「重新读取分享」。本次回复未成功提交。',
+          SUENEN_REPLY_CONTENT_REJECTED:
+            '资源站点未接受自动回复内容，请打开原帖按提示回复，再重新读取分享。',
+          SUENEN_REPLY_LOGIN_REQUIRED:
+            '资源站点登录已失效，请重新读取分享以恢复登录，或打开原帖查看。',
+          SUENEN_REPLY_NOT_UNLOCKED:
+            '回复已提交，但下载内容仍未解锁。请打开原帖核对，或稍后重新读取；不会重复回复。',
+          SUENEN_REPLY_REJECTED:
+            '资源站点未接受自动回复，请打开原帖查看限制，再重新读取分享。',
+          SUENEN_REPLY_FORM_MISSING:
+            '该帖子没有可用的回复入口，可能已关闭回复或需要额外权限，请打开原帖查看。',
+        }
+        if (error instanceof Error && replyErrors[error.message])
+          throw new ConflictException({
+            code: error.message,
+            message: replyErrors[error.message],
+          })
         throw error
       })
     if (!shares.length)
@@ -307,6 +326,7 @@ export class TaskService {
             result: JSON.stringify({
               stagingFolderId: staging.id,
               previousFileIds,
+              expectedFileCount: selected.length,
             }),
           },
         })
@@ -323,6 +343,7 @@ export class TaskService {
       await quark.waitTask(task.remoteTaskId!)
       transferred = true
       const saved = JSON.parse(task.result)
+      saved.expectedFileCount ??= input.fileIds?.length
       await database.task.update({
         where: { id },
         data: {
@@ -480,6 +501,17 @@ export class TaskService {
     }
     return { folderId, files }
   }
+  private async waitForFiles(
+    quark: QuarkClient,
+    folderId: string,
+    confirmed: (files: any[]) => boolean
+  ) {
+    for (let attempt = 0; ; attempt++) {
+      const files = await quark.listFiles(folderId)
+      if (confirmed(files) || attempt === 9) return files
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+  }
   private async containsVideo(
     quark: QuarkClient,
     files: any[],
@@ -516,6 +548,7 @@ export class TaskService {
     saved: {
       stagingFolderId: string
       previousFileIds?: string[]
+      expectedFileCount?: number
       replacementFiles?: { fid: string; file_name: string }[]
     }
   ) {
@@ -523,8 +556,18 @@ export class TaskService {
     const previousFileIds = saved.previousFileIds || []
     let current = await quark.listFiles(target)
     const stagingExists = current.some((file: any) => file.fid === stagingId)
-    const incoming = stagingExists ? await quark.listFiles(stagingId) : []
+    const complete = (files: any[]) =>
+      saved.expectedFileCount
+        ? files.length === saved.expectedFileCount
+        : files.length > 0
+    const incoming = stagingExists
+      ? saved.replacementFiles
+        ? await quark.listFiles(stagingId)
+        : await this.waitForFiles(quark, stagingId, complete)
+      : []
     if (!saved.replacementFiles) {
+      if (!complete(incoming))
+        throw new Error('转存文件列表尚未完整，已保留原资源，请重试整理。')
       if (!(await this.containsVideo(quark, incoming)))
         throw new Error('转存内容中未识别到视频，已保留原资源，请在网盘核对。')
       saved.replacementFiles = incoming.map((file: any) => ({
@@ -558,14 +601,20 @@ export class TaskService {
         pending.map((file: any) => file.fid),
         target
       )
-    current = await quark.listFiles(target)
+    // Quark may complete the move task before directory listings reflect it.
+    current = await this.waitForFiles(quark, target, files =>
+      replacements.every(file => files.some(found => found.fid === file.fid))
+    )
     if (
       replacements.some(
         file => !current.some((found: any) => found.fid === file.fid)
       )
     )
       throw new Error('转存的新资源未全部移入，已保留原资源，请重试整理。')
-    if (stagingExists && (await quark.listFiles(stagingId)).length)
+    if (
+      stagingExists &&
+      (await this.waitForFiles(quark, stagingId, files => !files.length)).length
+    )
       throw new Error('转存临时目录仍有文件，已保留原资源，请在网盘核对。')
     const stale = current
       .filter((file: any) => previousFileIds.includes(file.fid))
@@ -578,6 +627,14 @@ export class TaskService {
       )
         await quark.rename(file.fid, file.file_name)
     }
+    const restored = (files: any[]) =>
+      replacements.every(file =>
+        files.some(
+          found => found.fid === file.fid && found.file_name === file.file_name
+        )
+      )
+    if (!restored(await this.waitForFiles(quark, target, restored)))
+      throw new Error('转存文件已移入，整理命名尚未确认，请重试整理。')
     if (stagingExists) await quark.delete([stagingId])
     return previousFileIds.length
   }

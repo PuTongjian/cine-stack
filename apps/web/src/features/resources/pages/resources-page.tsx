@@ -51,7 +51,8 @@ export function ResourcesPage() {
         </div>
       </div>
       <p className="muted">
-        列出 Suenen 搜索的前十项，点击标题进入网盘，自行选择文件转存。
+        列出 Suenen
+        的全部搜索结果，点击标题读取分享；需要回复的帖子会自动回复解锁。可选择整个文件夹，或同时勾选电影和字幕转存。
       </p>
       {(task.isPending || task.error) && <Status query={task} />}
       {task.data && ['queued', 'running'].includes(task.data.status) && (
